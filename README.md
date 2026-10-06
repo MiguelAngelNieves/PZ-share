@@ -1,0 +1,42 @@
+# PZ Share
+
+App de escritorio para compartir una partida de **Project Zomboid** entre amigos sin servidor dedicado.
+Cualquiera hace *Host* desde su PC; la partida vive en un repo privado de GitHub y la app la baja antes de jugar y la sube al cerrar el juego.
+
+![PZ Share](captura.png)
+
+## Qué hace (y qué no)
+
+Todo está en un solo archivo: [`pz_share.py`](pz_share.py) (~730 líneas, Python + customtkinter).
+Lo único que ejecuta fuera de sí misma (busca `subprocess`, `os.startfile` y `webbrowser` en el código):
+
+- `git` (clone, pull, commit, push) sobre la carpeta de la partida que tú eliges.
+- Steam, para abrir el juego: `steam.exe -applaunch 108600 -cachedir=<tu carpeta>`.
+- `tasklist`, para saber si `ProjectZomboid64.exe` sigue abierto y subir la partida al cerrarlo.
+- El Explorador de Windows (botón *Abrir carpeta*) y el navegador (botón *Descargar Git*).
+
+Además:
+
+- *Importar partida existente* copia archivos de `%USERPROFILE%\Zomboid` a la carpeta de la partida.
+- Crea `host.lock` con tu nombre para avisar a los demás que estás jugando.
+- Guarda su configuración (nombre, repo, carpeta) en `%APPDATA%\PZShare\config.json`.
+- **No** guarda contraseñas ni tokens: el login de GitHub lo maneja Git Credential Manager (el de Git para Windows).
+- **No** se conecta a ningún servidor propio: solo a GitHub, a través de git.
+- **No** sube ajustes personales: el `.gitignore` solo deja pasar `Server/`, `Saves/Multiplayer/` y `db/`.
+
+## Usarla
+
+Requisitos: [Git para Windows](https://git-scm.com/download/win) y [Python 3](https://python.org/downloads) (marcar *Add to PATH*).
+
+| Opción | Cómo |
+|---|---|
+| Ejecutar con Python | Doble clic en `ejecutar.bat` |
+| Generar tu propio .exe | Doble clic en `crear_exe.bat` → `dist\PZ Share.exe` |
+
+Primera vez: tu nombre, link del repo de la partida y una carpeta **vacía** → *Conectar*.
+
+## Reglas de la partida
+
+- Abrir siempre el juego desde **Jugar** en PZ Share.
+- Todos con la misma versión del juego y los mismos mods.
+- Un solo host a la vez (la app avisa si alguien ya está jugando).
