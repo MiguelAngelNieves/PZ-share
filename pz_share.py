@@ -934,5 +934,24 @@ class ModsDialog(ctk.CTkToplevel):
             time.sleep(0.5)
 
 
+def already_running():
+    """True si ya hay otra PZ Share abierta (y la trae al frente). Solo Windows."""
+    if not IS_WIN:
+        return False
+    import ctypes
+    k32, u32 = ctypes.windll.kernel32, ctypes.windll.user32
+    k32.CreateMutexW.restype = ctypes.c_void_p
+    handle = k32.CreateMutexW(None, False, r"Local\PZShareSingleInstance")
+    if k32.GetLastError() != 183:  # ERROR_ALREADY_EXISTS
+        already_running.handle = handle  # mantenerlo vivo mientras corra la app
+        return False
+    hwnd = u32.FindWindowW(None, APP_NAME)
+    if hwnd:
+        u32.ShowWindow(hwnd, 9)  # SW_RESTORE
+        u32.SetForegroundWindow(hwnd)
+    return True
+
+
 if __name__ == "__main__":
-    App().mainloop()
+    if not already_running():
+        App().mainloop()
