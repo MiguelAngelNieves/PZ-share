@@ -14,7 +14,9 @@ import subprocess
 import sys
 import threading
 import time
+import io
 import urllib.parse
+import urllib.request
 import webbrowser
 from pathlib import Path
 from tkinter import filedialog, messagebox
@@ -390,6 +392,91 @@ def open_workshop(wid):
         webbrowser.open(f"steam://url/CommunityFilePage/{wid}")
     else:
         webbrowser.open(f"https://steamcommunity.com/sharedfiles/filedetails/?id={wid}")
+
+
+WS_API = "https://api.steampowered.com/ISteamRemoteStorage/GetPublishedFileDetails/v1/"
+WS_CACHE = CONFIG_DIR / "cache"
+
+
+def clean_bbcode(text):
+    """Descripción del Workshop sin BBCode ni links de imágenes, lista para mostrar."""
+    text = re.sub(r"\[img\].*?\[/img\]", "", text or "", flags=re.I | re.S)
+    text = re.sub(r"\[url=[^\]]*\](.*?)\[/url\]", r"\1", text, flags=re.I | re.S)
+    text = re.sub(r"\[\*\]", "• ", text)
+    text = re.sub(r"\[/?[a-z0-9]+(=[^\]]*)?\]", "", text, flags=re.I)
+    text = re.sub(r"https?://\S+", "", text)
+    text = re.sub(r"[ \t]+", " ", text)
+    return re.sub(r"\n\s*\n+", "\n", text).strip()
+
+
+def load_ws_cache():
+    try:
+        return json.loads((WS_CACHE / "workshop.json").read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def fetch_workshop_details(ids):
+    """Título, descripción, imagen y datos de cada item, desde la API pública de Steam (sin clave)."""
+    ids = [i for i in ids if str(i).isdigit()]
+    if not ids:
+        return {}
+    data = {"itemcount": len(ids)}
+    for i, wid in enumerate(ids):
+        data[f"publishedfileids[{i}]"] = wid
+    req = urllib.request.Request(WS_API, data=urllib.parse.urlencode(data).encode(),
+                                 headers={"User-Agent": "PZShare"})
+    j = json.loads(urllib.request.urlopen(req, timeout=20).read().decode("utf-8", "replace"))
+    out = {}
+    for d in j.get("response", {}).get("publishedfiledetails", []):
+        if d.get("result") != 1:
+            continue
+        out[d["publishedfileid"]] = {
+            "title": d.get("title") or d["publishedfileid"],
+            "desc": clean_bbcode(d.get("description", "")),
+            "preview": d.get("preview_url", ""),
+            "updated": d.get("time_updated"),
+            "subs": d.get("lifetime_subscriptions") or d.get("subscriptions") or 0,
+            "tags": [t.get("tag", "") for t in d.get("tags", [])],
+        }
+    cache = load_ws_cache()
+    cache.update(out)
+    WS_CACHE.mkdir(parents=True, exist_ok=True)
+    (WS_CACHE / "workshop.json").write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
+    return out
+
+
+def fetch_thumb(wid, url, size=72):
+    """Miniatura del mod (PIL.Image) con caché en disco. Devuelve None si no se puede."""
+    try:
+        from PIL import Image
+    except ImportError:
+        return None
+    f = WS_CACHE / f"{wid}.img"
+    try:
+        if not f.exists():
+            if not url:
+                return None
+            WS_CACHE.mkdir(parents=True, exist_ok=True)
+            raw = urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "PZShare"}),
+                                         timeout=20).read()
+            f.write_bytes(raw)
+        img = Image.open(io.BytesIO(f.read_bytes())).convert("RGB")
+        w, h = img.size
+        side = min(w, h)
+        img = img.crop(((w - side) // 2, (h - side) // 2, (w + side) // 2, (h + side) // 2))
+        return img.resize((size, size))
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def fmt_subs(n):
+    n = int(n or 0)
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f} M"
+    if n >= 1000:
+        return f"{n / 1000:.0f} k"
+    return str(n)
 
 
 def collection_id(text):
@@ -1062,82 +1149,203 @@ class ImportDialog(ctk.CTkToplevel):
 
 
 class ModsDialog(ctk.CTkToplevel):
+    FILTERS = ("Todos", "Me faltan", "Instalados")
+
     def __init__(self, main: MainView, rep):
         super().__init__(main.app)
         self.rep = rep
+        self.main = main
         self.title("Mods de la partida")
-        self.geometry("460x680")
-        self.minsize(400, 480)
+        self.geometry("580x780")
+        self.minsize(500, 560)
         self.configure(fg_color=C["bg"])
         self.transient(main.app)
+        self.details = load_ws_cache()
+        self.thumbs = {}       # wid -> CTkImage (hay que guardar la referencia)
+        self.thumb_labels = {}  # wid -> label donde va la imagen
+        self.expanded = set()
+        self.missing = set(rep["missing_ws"])
 
-        ctk.CTkLabel(self, text="Mods de la partida", font=font(17, "bold"),
+        ctk.CTkLabel(self, text="Mods de la partida", font=font(18, "bold"),
                      text_color=C["text"]).pack(anchor="w", padx=20, pady=(18, 2))
-        ctk.CTkLabel(self, text=f"{rep['active']} mods activos · {rep['wanted_ws']} items de Workshop",
+        n_ok = len(rep["wanted_ids"]) - len(self.missing)
+        ctk.CTkLabel(self, text=f"{rep['active']} mods activos · {len(rep['wanted_ids'])} items de Workshop · "
+                                f"{n_ok} instalados en tu PC",
                      font=font(12), text_color=C["muted"]).pack(anchor="w", padx=20)
 
-        # Pack de mods del grupo
-        self.main = main
-        pack = card(self)
-        pack.pack(fill="x", padx=20, pady=(14, 0))
-        ctk.CTkLabel(pack, text="📦  Pack de mods del grupo", font=font(13, "bold"),
-                     text_color=C["text"]).pack(anchor="w", padx=14, pady=(12, 2))
-        self.coll = collection_id(main.app.repo.group().get("collection", ""))
-        if self.coll:
-            ctk.CTkButton(pack, text="Abrir la colección en Steam (Suscribirse a todo)", height=38,
+        # Acciones rápidas
+        acts = ctk.CTkFrame(self, fg_color="transparent")
+        acts.pack(fill="x", padx=20, pady=(12, 0))
+        acts.grid_columnconfigure((0, 1), weight=1)
+        if self.missing:
+            ctk.CTkButton(acts, text=f"Suscribirme a los {len(self.missing)} que me faltan", height=40,
                           corner_radius=10, font=font(13, "bold"), fg_color=C["accent"],
                           hover_color=C["accent_h"], text_color="#0B0F0C",
-                          command=lambda: open_workshop(self.coll)).pack(fill="x", padx=14, pady=(6, 4))
+                          command=self.open_steam).grid(row=0, column=0, sticky="ew", padx=(0, 5))
         else:
-            ctk.CTkLabel(pack, text="Crea una Colección en el Workshop con los mods de la partida y pega "
-                                    "su link aquí: tus amigos se suscriben a todo con un clic.",
-                         font=font(11), text_color=C["muted"], wraplength=380, justify="left",
-                         anchor="w").pack(fill="x", padx=14)
-        line = ctk.CTkFrame(pack, fg_color="transparent")
-        line.pack(fill="x", padx=14, pady=(6, 4))
-        self.coll_entry = ctk.CTkEntry(line, height=32, corner_radius=8, font=font(12),
-                                       placeholder_text="Link de la colección de Steam",
+            ctk.CTkLabel(acts, text="✓ Tienes todos los mods", font=font(13, "bold"),
+                         text_color=C["accent"]).grid(row=0, column=0, sticky="w")
+        ghost_button(acts, f"Abrir todos ({len(rep['wanted_ids'])})", self.open_all
+                     ).grid(row=0, column=1, sticky="ew", padx=(5, 0))
+
+        self.filter = ctk.CTkSegmentedButton(self, values=list(self.FILTERS), command=lambda _: self.render_list(),
+                                             font=font(12), selected_color=C["accent"],
+                                             selected_hover_color=C["accent_h"], unselected_color=C["card2"],
+                                             unselected_hover_color=C["border"], text_color=C["text"])
+        self.filter.set("Me faltan" if self.missing else "Todos")
+        self.filter.pack(fill="x", padx=20, pady=(12, 0))
+
+        self.listbox = ctk.CTkScrollableFrame(self, fg_color=C["card"], corner_radius=12)
+        self.listbox.pack(fill="both", expand=True, padx=20, pady=12)
+
+        # Colección de Steam (opcional)
+        self.coll = collection_id(main.app.repo.group().get("collection", ""))
+        foot = ctk.CTkFrame(self, fg_color="transparent")
+        foot.pack(fill="x", padx=20, pady=(0, 14))
+        if self.coll:
+            ghost_button(foot, "📦  Abrir la colección del grupo en Steam",
+                         lambda: open_workshop(self.coll)).pack(fill="x")
+        self.coll_toggle = ctk.CTkButton(foot, text="Colección de Steam (opcional) ▸", height=26,
+                                         fg_color="transparent", hover_color=C["card2"],
+                                         text_color=C["muted"], font=font(12), anchor="w",
+                                         command=self.toggle_collection)
+        self.coll_toggle.pack(fill="x", pady=(6, 0))
+        self.coll_box = ctk.CTkFrame(foot, fg_color="transparent")
+        self.coll_entry = ctk.CTkEntry(self.coll_box, height=32, corner_radius=8, font=font(12),
+                                       placeholder_text="Link de la colección (opcional)",
                                        border_color=C["border"])
         self.coll_entry.pack(side="left", fill="x", expand=True)
         if self.coll:
             self.coll_entry.insert(0, f"https://steamcommunity.com/sharedfiles/filedetails/?id={self.coll}")
-        ghost_button(line, "Guardar", self.save_collection, width=80).pack(side="left", padx=(8, 0))
-        if rep.get("wanted_ids"):
-            ctk.CTkButton(pack, text=f"Abrir los {len(rep['wanted_ids'])} mods de la partida uno por uno",
-                          height=30, corner_radius=8, font=font(12), fg_color="transparent",
-                          hover_color=C["card2"], text_color=C["accent"],
-                          command=self.open_all).pack(anchor="w", padx=8, pady=(0, 10))
+        ghost_button(self.coll_box, "Guardar", self.save_collection, width=80).pack(side="left", padx=(8, 0))
 
-        box = ctk.CTkScrollableFrame(self, fg_color=C["card"], corner_radius=12)
-        box.pack(fill="both", expand=True, padx=20, pady=14)
-        n = rep["names"]
-        ws = rep["ws_names"]
-        self.link_rows(box, "Te faltan (suscríbete en Steam)", C["danger"],
-                       [(f"Workshop {w}", "Abrir", lambda w=w: open_workshop(w)) for w in rep["missing_ws"]])
+        self.render_list()
+        self.main.app.bg(lambda: fetch_workshop_details(rep["wanted_ids"]), self.on_details, lambda e: None)
+
+    # — lista interactiva —
+    def toggle_collection(self):
+        if self.coll_box.winfo_ismapped():
+            self.coll_box.pack_forget()
+            self.coll_toggle.configure(text="Colección de Steam (opcional) ▸")
+        else:
+            self.coll_box.pack(fill="x", pady=(4, 0))
+            self.coll_toggle.configure(text="Colección de Steam (opcional) ▾")
+
+    def on_details(self, fresh):
+        if not self.winfo_exists():
+            return
+        self.details.update(fresh or {})
+        self.render_list()
+
+    def render_list(self):
+        for w in self.listbox.winfo_children():
+            w.destroy()
+        self.thumb_labels = {}
+        mode = self.filter.get()
+        ids = self.rep["wanted_ids"]
+        if mode == "Me faltan":
+            ids = [w for w in ids if w in self.missing]
+        elif mode == "Instalados":
+            ids = [w for w in ids if w not in self.missing]
+        if not self.rep["wanted_ids"]:
+            ctk.CTkLabel(self.listbox, text="La partida no tiene items de Workshop (WorkshopItems vacío).",
+                         font=font(12), text_color=C["muted"], wraplength=460).pack(anchor="w", padx=8, pady=8)
+        elif not ids:
+            ctk.CTkLabel(self.listbox, text="✓ Nada por aquí." if mode == "Me faltan" else "Nada que mostrar.",
+                         font=font(13), text_color=C["accent"]).pack(anchor="w", padx=8, pady=8)
+        for wid in ids:
+            self.mod_card(wid)
+        self.review_sections()
+        # miniaturas en segundo plano
+        todo = [(w, self.details.get(w, {}).get("preview", "")) for w in ids if w not in self.thumbs]
+        if todo:
+            self.main.app.bg(lambda: [(w, fetch_thumb(w, u)) for w, u in todo], self.on_thumbs, lambda e: None)
+        for w in ids:
+            if w in self.thumbs and w in self.thumb_labels:
+                self.thumb_labels[w].configure(image=self.thumbs[w], text="")
+
+    def on_thumbs(self, pairs):
+        if not self.winfo_exists():
+            return
+        for wid, img in pairs:
+            if img is None:
+                continue
+            self.thumbs[wid] = ctk.CTkImage(light_image=img, dark_image=img, size=(64, 64))
+            lbl = self.thumb_labels.get(wid)
+            if lbl is not None and lbl.winfo_exists():
+                lbl.configure(image=self.thumbs[wid], text="")
+
+    def mod_card(self, wid):
+        d = self.details.get(wid, {})
+        missing = wid in self.missing
+        box = ctk.CTkFrame(self.listbox, fg_color=C["card2"], corner_radius=10, border_width=1,
+                           border_color=C["danger"] if missing else C["border"])
+        box.pack(fill="x", padx=4, pady=4)
+        thumb = ctk.CTkLabel(box, text="🧩", width=64, height=64, fg_color=C["card"], corner_radius=8,
+                             font=font(22))
+        thumb.grid(row=0, column=0, rowspan=3, padx=10, pady=10, sticky="n")
+        self.thumb_labels[wid] = thumb
+        box.grid_columnconfigure(1, weight=1)
+
+        title = ctk.CTkLabel(box, text=d.get("title", f"Workshop {wid}"), font=font(13, "bold"),
+                             text_color=C["text"], anchor="w", justify="left", wraplength=250)
+        title.grid(row=0, column=1, sticky="ew", pady=(10, 0))
+        chips = "✗ Te falta" if missing else "✓ Instalado"
+        tags = d.get("tags", [])
+        b42 = "" if not d else ("  ·  B42" if "Build 42" in tags else "  ·  ⚠ sin tag B42")
+        meta = f"{chips}{b42}"
+        if d.get("subs"):
+            meta += f"  ·  {fmt_subs(d['subs'])} suscriptores"
+        if d.get("updated"):
+            meta += f"  ·  act. {datetime.datetime.fromtimestamp(d['updated']).strftime('%d/%m/%Y')}"
+        ctk.CTkLabel(box, text=meta, font=font(11), anchor="w", justify="left", wraplength=250,
+                     text_color=C["danger"] if missing else C["muted"]).grid(row=1, column=1, sticky="ew")
+        desc = d.get("desc", "") or ("Cargando descripción…" if not d else "Sin descripción.")
+        full = wid in self.expanded
+        flat = " ".join(desc.split())
+        short = desc if full else (flat[:150].rsplit(" ", 1)[0] + "…" if len(flat) > 150 else flat)
+        dl = ctk.CTkLabel(box, text=short[:900], font=font(11), text_color=C["text"], anchor="w",
+                          justify="left", wraplength=250)
+        dl.grid(row=2, column=1, sticky="ew", pady=(4, 10))
+
+        btns = ctk.CTkFrame(box, fg_color="transparent")
+        btns.grid(row=0, column=2, rowspan=3, padx=10, pady=10, sticky="n")
+        ctk.CTkButton(btns, text="Suscribirme" if missing else "Abrir en Steam", width=110, height=30,
+                      corner_radius=8, font=font(12, "bold" if missing else "normal"),
+                      fg_color=C["accent"] if missing else C["card"],
+                      hover_color=C["accent_h"] if missing else C["border"],
+                      text_color="#0B0F0C" if missing else C["text"],
+                      command=lambda: open_workshop(wid)).pack(pady=(0, 6))
+        if len(desc) > 150:
+            ctk.CTkButton(btns, text="Ver menos" if full else "Ver más", width=110, height=26,
+                          corner_radius=8, font=font(11), fg_color="transparent", hover_color=C["card"],
+                          text_color=C["accent"], command=lambda: self.toggle(wid)).pack()
+        for w in (box, title, dl, thumb):
+            w.bind("<Button-1>", lambda _e: self.toggle(wid))
+
+    def toggle(self, wid):
+        self.expanded.symmetric_difference_update({wid})
+        self.render_list()
+
+    def review_sections(self):
+        """Revisión de Cristian: mods sin ID, items sin listar y descargados sin activar."""
+        rep, n, ws = self.rep, self.rep["names"], self.rep["ws_names"]
+        if not (rep["missing_mods"] or rep["unlisted"] or rep["unused_ws"]):
+            return
+        ctk.CTkLabel(self.listbox, text="Revisión", font=font(13, "bold"), text_color=C["text"]
+                     ).pack(anchor="w", padx=8, pady=(14, 0))
         extra = " (casi seguro vienen de los items que te faltan)" if rep["missing_ws"] else ""
-        no_id = "" if rep["wanted_ws"] else (
-            "\nLa partida no trae IDs de Workshop (WorkshopItems vacío), así que solo puedo "
-            "buscarlos por nombre en el Workshop.")
-        self.link_rows(box, "Mods activos que no están en tu PC" + extra + no_id,
+        self.link_rows(self.listbox, "Mods activos que no están en tu PC" + extra,
                        C["muted"] if rep["missing_ws"] else C["danger"],
                        [(m, "Buscar", lambda m=m: search_workshop(m)) for m in rep["missing_mods"]])
-        self.section(box, "Activos, pero su item no está en WorkshopItems (tus amigos no lo bajarán solo)",
+        self.section(self.listbox, "Activos, pero su item no está en WorkshopItems (tus amigos no lo bajarán solo)",
                      C["warn"], [n.get(m, m) for m in rep["unlisted"]])
-        self.section(box, "Descargados pero ningún mod suyo está activado", C["warn"],
-                     [ws.get(w, w) for w in rep["unused_ws"]])
-        if not rep["problems"]:
-            ctk.CTkLabel(box, text="✓ Todo en orden: los mods activos están instalados.",
-                         font=font(13), text_color=C["accent"]).pack(anchor="w", padx=8, pady=8)
-
         if rep["unlisted_ws"]:
-            ctk.CTkButton(self, text=f"Añadir {len(rep['unlisted_ws'])} items a WorkshopItems", height=38,
-                          corner_radius=10, font=font(13), fg_color=C["card2"], hover_color=C["border"],
-                          text_color=C["text"], command=self.fix_unlisted).pack(fill="x", padx=20, pady=(0, 10))
-        if rep["missing_ws"]:
-            ctk.CTkButton(self, text=f"Abrir {len(rep['missing_ws'])} mods en Steam", height=42,
-                          corner_radius=10, font=font(14, "bold"), fg_color=C["accent"],
-                          hover_color=C["accent_h"], text_color="#0B0F0C",
-                          command=self.open_steam).pack(fill="x", padx=20, pady=(0, 18))
+            ctk.CTkButton(self.listbox, text=f"Añadir {len(rep['unlisted_ws'])} items a WorkshopItems", height=34,
+                          corner_radius=10, font=font(12), fg_color=C["card2"], hover_color=C["border"],
+                          text_color=C["text"], command=self.fix_unlisted).pack(fill="x", padx=8, pady=(6, 0))
+        self.section(self.listbox, "Descargados pero ningún mod suyo está activado", C["warn"],
+                     [ws.get(w, w) for w in rep["unused_ws"]])
 
     def save_collection(self):
         text = self.coll_entry.get().strip()

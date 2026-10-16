@@ -49,4 +49,5 @@ Primera vez: tu nombre, link del repo de la partida y una carpeta **vacía** →
 
 - **Unirse**: si otro está hosteando, la app abre el juego y tu lista de amigos de Steam para entrar a su partida.
 - **Historial**: últimas sesiones en la pantalla principal y, en *Ver todo*, quién ha jugado más y cuánto (sale de los commits).
-- **Pack de mods del grupo**: en *Mods de la partida* pega el link de una Colección del Workshop; se guarda en `pzshare.json` y todos ven el botón para suscribirse a todo con un clic.
+- **Mods con vista previa**: cada mod de la partida sale como tarjeta con imagen, descripción, suscriptores y si es de B42 (datos públicos de Steam). Filtra por *Me faltan* / *Instalados*, suscríbete uno por uno o a todos los que faltan.
+- **Pack de mods del grupo** (opcional): en *Mods de la partida* pega el link de una Colección del Workshop; se guarda en `pzshare.json` y todos ven el botón para suscribirse a todo con un clic.
