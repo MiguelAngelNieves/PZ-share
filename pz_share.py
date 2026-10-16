@@ -14,6 +14,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.parse
 import webbrowser
 from pathlib import Path
 from tkinter import filedialog, messagebox
@@ -314,6 +315,12 @@ def open_workshop(wid):
         webbrowser.open(f"steam://url/CommunityFilePage/{wid}")
     else:
         webbrowser.open(f"https://steamcommunity.com/sharedfiles/filedetails/?id={wid}")
+
+
+def search_workshop(text):
+    """Busqueda en el Workshop de PZ, para mods de los que no se conoce el ID."""
+    webbrowser.open("https://steamcommunity.com/workshop/browse/?appid=" + STEAM_APP_ID
+                    + "&browsesort=textsearch&searchtext=" + urllib.parse.quote(text))
 
 
 def find_local_servers():
@@ -884,20 +891,15 @@ class ModsDialog(ctk.CTkToplevel):
         box.pack(fill="both", expand=True, padx=20, pady=14)
         n = rep["names"]
         ws = rep["ws_names"]
-        if rep["missing_ws"]:
-            ctk.CTkLabel(box, text="Te faltan (suscríbete en Steam)", font=font(12, "bold"),
-                         text_color=C["danger"], anchor="w").pack(fill="x", padx=8, pady=(10, 2))
-            for w in rep["missing_ws"]:
-                line = ctk.CTkFrame(box, fg_color="transparent")
-                line.pack(fill="x", padx=8, pady=2)
-                ctk.CTkButton(line, text="Abrir", width=64, height=28, corner_radius=8, font=font(12),
-                              fg_color=C["card2"], hover_color=C["border"], text_color=C["text"],
-                              command=lambda w=w: open_workshop(w)).pack(side="right")
-                ctk.CTkLabel(line, text=f"• Workshop {w}", font=font(12), text_color=C["text"],
-                             anchor="w").pack(side="left", fill="x", expand=True)
+        self.link_rows(box, "Te faltan (suscríbete en Steam)", C["danger"],
+                       [(f"Workshop {w}", "Abrir", lambda w=w: open_workshop(w)) for w in rep["missing_ws"]])
         extra = " (casi seguro vienen de los items que te faltan)" if rep["missing_ws"] else ""
-        self.section(box, "Mods activos que no están en tu PC" + extra,
-                     C["muted"] if rep["missing_ws"] else C["danger"], rep["missing_mods"])
+        no_id = "" if rep["wanted_ws"] else (
+            "\nLa partida no trae IDs de Workshop (WorkshopItems vacío), así que solo puedo "
+            "buscarlos por nombre en el Workshop.")
+        self.link_rows(box, "Mods activos que no están en tu PC" + extra + no_id,
+                       C["muted"] if rep["missing_ws"] else C["danger"],
+                       [(m, "Buscar", lambda m=m: search_workshop(m)) for m in rep["missing_mods"]])
         self.section(box, "Activos, pero su item no está en WorkshopItems (tus amigos no lo bajarán solo)",
                      C["warn"], [n.get(m, m) for m in rep["unlisted"]])
         self.section(box, "Descargados pero ningún mod suyo está activado", C["warn"],
@@ -913,6 +915,21 @@ class ModsDialog(ctk.CTkToplevel):
                           command=self.open_steam).pack(fill="x", padx=20, pady=(0, 18))
         else:
             self.geometry("460x500")
+
+    @staticmethod
+    def link_rows(parent, title, color, rows):
+        if not rows:
+            return
+        ctk.CTkLabel(parent, text=title, font=font(12, "bold"), text_color=color,
+                     wraplength=380, justify="left", anchor="w").pack(fill="x", padx=8, pady=(10, 2))
+        for label, btn, cmd in rows:
+            line = ctk.CTkFrame(parent, fg_color="transparent")
+            line.pack(fill="x", padx=8, pady=2)
+            ctk.CTkButton(line, text=btn, width=64, height=28, corner_radius=8, font=font(12),
+                          fg_color=C["card2"], hover_color=C["border"], text_color=C["text"],
+                          command=cmd).pack(side="right")
+            ctk.CTkLabel(line, text=f"• {label}", font=font(12), text_color=C["text"],
+                         anchor="w").pack(side="left", fill="x", expand=True)
 
     @staticmethod
     def section(parent, title, color, items):
