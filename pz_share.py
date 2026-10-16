@@ -232,15 +232,80 @@ def steam_workshop_dirs():
     return [d for d in (lib / "steamapps" / "workshop" / "content" / STEAM_APP_ID for lib in libs) if d.exists()]
 
 
-def missing_workshop_mods(folder: Path):
-    """IDs de Workshop que pide la partida compartida y no estan instalados en este PC."""
-    wanted = []
+def read_mod_info(path: Path):
+    """(id, nombre) de un mod.info, o None."""
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    mid = re.search(r"^\s*id\s*=\s*(.+?)\s*$", text, re.M)
+    name = re.search(r"^\s*name\s*=\s*(.+?)\s*$", text, re.M)
+    if not mid:
+        return None
+    return mid.group(1), (name.group(1) if name else mid.group(1))
+
+
+def scan_mods(mods_dir: Path):
+    """{id_mod: nombre} de una carpeta 'mods' (mod.info puede estar en subcarpetas de version)."""
+    found = {}
+    for pattern in ("*/mod.info", "*/*/mod.info"):
+        for info in mods_dir.glob(pattern):
+            res = read_mod_info(info)
+            if res:
+                found[res[0]] = res[1]
+    return found
+
+
+def mod_report(folder: Path):
+    """Cruza Mods= y WorkshopItems= de la partida compartida con lo instalado en este PC."""
+    active, wanted_ws = [], []  # active: (id_mod, id_workshop_o_None)
     for ini in sorted((Path(folder) / "Server").glob("*.ini")):
         for line in ini.read_text(encoding="utf-8", errors="replace").splitlines():
-            if line.startswith("WorkshopItems="):
-                wanted += [i.strip() for i in line.split("=", 1)[1].split(";") if i.strip().isdigit()]
-    installed = {p.name for d in steam_workshop_dirs() for p in d.iterdir()}
-    return [i for i in dict.fromkeys(wanted) if i not in installed]
+            key, _, val = line.partition("=")
+            items = [i.strip() for i in val.split(";") if i.strip()]
+            if key == "Mods":
+                for raw in items:
+                    wid, sep, mid = raw.replace("\\", "/").rpartition("/")
+                    active.append((mid, wid or None))
+            elif key == "WorkshopItems":
+                wanted_ws += [i for i in items if i.isdigit()]
+    wanted_ws = list(dict.fromkeys(wanted_ws))
+
+    names = {}                                        # id_mod -> nombre
+    ws_mods = {}                                      # id_workshop -> {id_mod}
+    for d in steam_workshop_dirs():
+        for item in d.iterdir():
+            found = scan_mods(item / "mods")
+            ws_mods.setdefault(item.name, set()).update(found)
+            names.update(found)
+    local = {}
+    for d in (Path(folder) / "mods", ZOMBOID_HOME / "mods"):
+        local.update(scan_mods(d))
+    names.update(local)
+    installed_ids = set(names)
+
+    active_ids = {m for m, _ in active}
+    missing_ws = [w for w in wanted_ws if w not in ws_mods]
+    ws_of = {m: w for w, ms in ws_mods.items() for m in ms}
+    rep = {
+        "active": len(active),
+        "wanted_ws": len(wanted_ws),
+        "names": names,
+        "missing_ws": missing_ws,
+        # activos que no estan en este PC y que no se explican por un item de Workshop faltante
+        "missing_mods": [m for m, w in active if m not in installed_ids and w not in missing_ws],
+        # item de Workshop descargado (y pedido) pero ninguno de sus mods esta activado
+        "unused_ws": [w for w in wanted_ws if w in ws_mods and ws_mods[w] and not (ws_mods[w] & active_ids)],
+        # mod activo que viene de un item de Workshop que no esta en WorkshopItems: los demas no lo bajaran
+        "unlisted": [m for m, _ in active if m in ws_of and ws_of[m] not in wanted_ws and m not in local],
+        "ws_names": {w: next(iter(sorted(names[m] for m in ms if m in names)), w)
+                     for w, ms in ws_mods.items() if ms},
+    }
+    # Sin el mapa mod->item no se sabe de cual item viene cada mod faltante: si ya faltan items de
+    # Workshop, esos mods se explican por ellos y no se cuentan aparte.
+    rep["lacking"] = len(missing_ws) + (0 if missing_ws else len(rep["missing_mods"]))
+    rep["problems"] = rep["lacking"] + len(rep["unlisted"]) + len(rep["unused_ws"])
+    return rep
 
 
 def find_local_servers():
@@ -293,8 +358,8 @@ class App(ctk.CTk):
         super().__init__()
         ctk.set_appearance_mode("dark")
         self.title(APP_NAME)
-        self.geometry("460x640")
-        self.minsize(420, 600)
+        self.geometry("460x700")
+        self.minsize(420, 660)
         self.configure(fg_color=C["bg"])
         self.cfg = load_config()
         self.busy = False
@@ -508,12 +573,10 @@ class MainView(ctk.CTkFrame):
         self.sub_lbl = ctk.CTkLabel(inner, text="", font=font(12), text_color=C["muted"],
                                     anchor="w", justify="left")
         self.sub_lbl.pack(fill="x", pady=(6, 0))
-        self.mods_lbl = ctk.CTkLabel(inner, text="", font=font(12), text_color=C["warn"],
+        self.mods_lbl = ctk.CTkLabel(inner, text="", font=font(12), text_color=C["muted"],
                                      anchor="w", justify="left", wraplength=360)
-        self.mods_btn = ctk.CTkButton(inner, text="Abrir los mods que faltan en Steam", height=32,
-                                      corner_radius=8, fg_color=C["card2"], hover_color=C["border"],
-                                      text_color=C["text"], font=font(12), command=self.open_missing_mods)
-        self.missing = []
+        self.mods_lbl.pack(fill="x", pady=(4, 0))
+        self.report = None
 
         # Botón principal
         self.play_btn = ctk.CTkButton(self, text="▶   Jugar", height=60, corner_radius=14,
@@ -536,6 +599,8 @@ class MainView(ctk.CTkFrame):
         ghost_button(row, "Abrir carpeta", self.open_folder).grid(row=0, column=1, sticky="ew", padx=(5, 0))
         self.import_btn = ghost_button(row, "⤓  Importar partida existente", self.import_dialog)
         self.import_btn.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        self.mods_btn = ghost_button(row, "Mods de la partida", self.show_mods)
+        self.mods_btn.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(10, 0))
         self.release_btn = ctk.CTkButton(row, text="Liberar partida (quedó marcada como mía)", height=34,
                                          corner_radius=10, fg_color="transparent", border_width=1,
                                          border_color=C["danger"], text_color=C["danger"],
@@ -570,7 +635,7 @@ class MainView(ctk.CTkFrame):
         if owner and owner.lower() == me.lower():
             self.dot.configure(text_color=C["warn"])
             self.state_lbl.configure(text="La partida está marcada como tuya")
-            self.release_btn.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+            self.release_btn.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(10, 0))
         elif owner:
             self.dot.configure(text_color=C["danger"])
             self.state_lbl.configure(text=f"{owner} está jugando")
@@ -587,26 +652,25 @@ class MainView(ctk.CTkFrame):
 
     def render_mods(self):
         try:
-            self.missing = missing_workshop_mods(self.app.repo.folder)
+            self.report = mod_report(self.app.repo.folder)
         except OSError:
-            self.missing = []
-        if self.missing:
-            self.mods_lbl.configure(text=f"⚠ Te faltan {len(self.missing)} mods de la partida. "
-                                         "Suscríbete en Steam antes de jugar.")
-            self.mods_lbl.pack(fill="x", pady=(8, 0))
-            self.mods_btn.pack(fill="x", pady=(8, 0))
+            self.report = None
+        r = self.report
+        if not r or not r["active"]:
+            self.mods_lbl.configure(text="Mods: la partida no tiene mods activos.", text_color=C["muted"])
+        elif r["problems"]:
+            self.mods_lbl.configure(text=f"⚠ Mods: {r['problems']} cosas por revisar. "
+                                         "Pulsa «Mods de la partida».", text_color=C["warn"])
         else:
-            self.mods_lbl.pack_forget()
-            self.mods_btn.pack_forget()
+            self.mods_lbl.configure(text=f"✓ Mods: {r['active']} activos y todos instalados en tu PC.",
+                                    text_color=C["accent"])
 
-    def open_missing_mods(self):
-        if not messagebox.askyesno(
-                APP_NAME, f"Se abrirán {len(self.missing)} páginas de mods en Steam. "
-                          "Dale «Suscribirse» a cada una.\n\n¿Continuar?", parent=self):
-            return
-        for wid in self.missing:
-            webbrowser.open(f"steam://url/CommunityFilePage/{wid}")
-            time.sleep(0.5)
+    def show_mods(self):
+        self.render_mods()
+        if not self.report:
+            return messagebox.showinfo(APP_NAME, "No encontré la configuración de la partida todavía. "
+                                       "Sincroniza o importa una partida primero.", parent=self)
+        ModsDialog(self, self.report)
 
     # — acciones —
     def sync(self):
@@ -653,10 +717,12 @@ class MainView(ctk.CTkFrame):
                     self.set_busy(False, "")
                     return self.render((owner, repo.last_session()))
             self.render_mods()
-            if self.missing and not messagebox.askyesno(
+            r = self.report
+            lacking = r["lacking"] if r else 0
+            if lacking and not messagebox.askyesno(
                     APP_NAME,
-                    f"Te faltan {len(self.missing)} mods de la partida. Si entras así, el juego dará "
-                    "error o los desactivará.\n\n¿Jugar de todas formas?",
+                    f"Te faltan {lacking} mods de la partida. Si entras así, el juego dará "
+                    "error o los desactivará.\n\nRevisa «Mods de la partida». ¿Jugar de todas formas?",
                     icon="warning", parent=self):
                 self.set_busy(False, "")
                 return self.render((owner, repo.last_session()))
@@ -789,6 +855,66 @@ class ImportDialog(ctk.CTkToplevel):
         name = self.choice.get()
         self.destroy()
         self.main.do_import(name)
+
+
+class ModsDialog(ctk.CTkToplevel):
+    def __init__(self, main: MainView, rep):
+        super().__init__(main.app)
+        self.rep = rep
+        self.title("Mods de la partida")
+        self.geometry("460x560")
+        self.minsize(400, 400)
+        self.configure(fg_color=C["bg"])
+        self.transient(main.app)
+
+        ctk.CTkLabel(self, text="Mods de la partida", font=font(17, "bold"),
+                     text_color=C["text"]).pack(anchor="w", padx=20, pady=(18, 2))
+        ctk.CTkLabel(self, text=f"{rep['active']} mods activos · {rep['wanted_ws']} items de Workshop",
+                     font=font(12), text_color=C["muted"]).pack(anchor="w", padx=20)
+
+        box = ctk.CTkScrollableFrame(self, fg_color=C["card"], corner_radius=12)
+        box.pack(fill="both", expand=True, padx=20, pady=14)
+        n = rep["names"]
+        ws = rep["ws_names"]
+        self.section(box, "Te faltan (suscríbete en Steam)", C["danger"],
+                     [f"{ws.get(w, w)}  ·  Workshop {w}" for w in rep["missing_ws"]])
+        extra = " (casi seguro vienen de los items que te faltan)" if rep["missing_ws"] else ""
+        self.section(box, "Mods activos que no están en tu PC" + extra,
+                     C["muted"] if rep["missing_ws"] else C["danger"], rep["missing_mods"])
+        self.section(box, "Activos, pero su item no está en WorkshopItems (tus amigos no lo bajarán solo)",
+                     C["warn"], [n.get(m, m) for m in rep["unlisted"]])
+        self.section(box, "Descargados pero ningún mod suyo está activado", C["warn"],
+                     [ws.get(w, w) for w in rep["unused_ws"]])
+        if not rep["problems"]:
+            ctk.CTkLabel(box, text="✓ Todo en orden: los mods activos están instalados.",
+                         font=font(13), text_color=C["accent"]).pack(anchor="w", padx=8, pady=8)
+
+        if rep["missing_ws"]:
+            ctk.CTkButton(self, text=f"Abrir {len(rep['missing_ws'])} mods en Steam", height=42,
+                          corner_radius=10, font=font(14, "bold"), fg_color=C["accent"],
+                          hover_color=C["accent_h"], text_color="#0B0F0C",
+                          command=self.open_steam).pack(fill="x", padx=20, pady=(0, 18))
+        else:
+            self.geometry("460x500")
+
+    @staticmethod
+    def section(parent, title, color, items):
+        if not items:
+            return
+        ctk.CTkLabel(parent, text=title, font=font(12, "bold"), text_color=color,
+                     wraplength=380, justify="left", anchor="w").pack(fill="x", padx=8, pady=(10, 2))
+        for it in items:
+            ctk.CTkLabel(parent, text=f"• {it}", font=font(12), text_color=C["text"],
+                         wraplength=380, justify="left", anchor="w").pack(fill="x", padx=8)
+
+    def open_steam(self):
+        ids = self.rep["missing_ws"]
+        if not messagebox.askyesno(APP_NAME, f"Se abrirán {len(ids)} páginas de mods en Steam. "
+                                   "Dale «Suscribirse» a cada una.\n\n¿Continuar?", parent=self):
+            return
+        for wid in ids:
+            webbrowser.open(f"steam://url/CommunityFilePage/{wid}")
+            time.sleep(0.5)
 
 
 if __name__ == "__main__":

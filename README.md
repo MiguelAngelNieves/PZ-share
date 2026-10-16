@@ -40,6 +40,7 @@ Primera vez: tu nombre, link del repo de la partida y una carpeta **vacía** →
 - Abrir siempre el juego desde **Jugar** en PZ Share.
 - Todos con la misma versión del juego y los mismos mods.
   La lista de mods viaja con la partida (`Server/*.ini`), pero los archivos de los mods no:
-  cada jugador debe estar suscrito en Steam. Si faltan mods del Workshop, la app avisa,
-  y el botón **Abrir los mods que faltan en Steam** abre sus páginas para suscribirse.
+  cada jugador debe estar suscrito en Steam. El botón **Mods de la partida** cruza `Mods=` y
+  `WorkshopItems=` con lo instalado en tu PC y muestra qué falta, qué está activo y qué no
+  (con botón para abrir en Steam los mods que faltan). **Jugar** avisa si te faltan mods.
 - Un solo host a la vez (la app avisa si alguien ya está jugando).
