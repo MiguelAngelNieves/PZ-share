@@ -31,12 +31,14 @@ CONFIG_DIR = Path(os.environ.get("APPDATA", Path.home())) / "PZShare"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 ZOMBOID_HOME = Path.home() / "Zomboid"
 LOCK_FILE = "host.lock"
+GROUP_FILE = "pzshare.json"  # ajustes compartidos del grupo (viaja con la partida)
 GIT_DOWNLOAD = "https://git-scm.com/download/win"
 
 GITIGNORE = """# PZ Share: solo se comparte la partida. Graficos, teclas y logs quedan locales.
 /*
 !/.gitignore
 !/host.lock
+!/pzshare.json
 !/Saves/
 /Saves/*
 !/Saves/Multiplayer/
@@ -142,7 +144,48 @@ class Repo:
         if not gi.exists():
             gi.write_text(GITIGNORE, encoding="utf-8")
             return True
+        text = gi.read_text(encoding="utf-8", errors="replace")
+        if f"!/{GROUP_FILE}" not in text:  # repos creados con versiones viejas
+            gi.write_text(text.rstrip("\n") + f"\n!/{GROUP_FILE}\n", encoding="utf-8")
+            return True
         return False
+
+    # — ajustes del grupo (pzshare.json, se comparte con todos) —
+    def group(self):
+        try:
+            return json.loads((self.folder / GROUP_FILE).read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+
+    def set_group(self, **kw):
+        data = self.group()
+        data.update(kw)
+        (self.folder / GROUP_FILE).write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    # — historial —
+    def history(self, limit=300):
+        """Sesiones a partir de los commits: [{who, start, end, minutes}] de la más nueva a la más vieja."""
+        if not self.has_commits():
+            return []
+        out = self.g("log", f"-{limit}", "--format=%an\x1f%at\x1f%s", check=False)
+        rows = []
+        for line in out.splitlines():
+            parts = line.split("\x1f")
+            if len(parts) == 3 and parts[1].isdigit():
+                rows.append((parts[0], int(parts[1]), parts[2]))
+        rows.reverse()  # de la más vieja a la más nueva
+        sessions, open_start = [], {}
+        for who, ts, subj in rows:
+            if subj.endswith("empieza a jugar"):
+                open_start[who] = ts
+            elif subj.startswith("Partida de ") or "no llegó a jugar" in subj:
+                start = open_start.pop(who, None)
+                if "no llegó a jugar" in subj:
+                    continue
+                minutes = round((ts - start) / 60) if start and 0 < ts - start < 24 * 3600 else None
+                sessions.append({"who": who, "start": start or ts, "end": ts, "minutes": minutes})
+        sessions.reverse()
+        return sessions
 
     # — sync —
     def pull(self):
@@ -299,6 +342,7 @@ def mod_report(folder: Path):
     rep = {
         "active": len(active),
         "wanted_ws": len(wanted_ws),
+        "wanted_ids": wanted_ws,
         "names": names,
         "missing_ws": missing_ws,
         # activos que no estan en este PC y que no se explican por un item de Workshop faltante
@@ -346,6 +390,34 @@ def open_workshop(wid):
         webbrowser.open(f"steam://url/CommunityFilePage/{wid}")
     else:
         webbrowser.open(f"https://steamcommunity.com/sharedfiles/filedetails/?id={wid}")
+
+
+def collection_id(text):
+    """Saca el ID de un link de colección de Steam (o acepta el número solo)."""
+    m = re.search(r"(?:id=)?(\d{6,})", text or "")
+    return m.group(1) if m else None
+
+
+def open_steam_friends():
+    webbrowser.open("steam://open/friends")
+
+
+def fmt_minutes(m):
+    if m is None:
+        return "—"
+    if m < 60:
+        return f"{m} min"
+    return f"{m // 60} h {m % 60:02d} min"
+
+
+def fmt_when(ts):
+    d = datetime.datetime.fromtimestamp(ts)
+    today = datetime.date.today()
+    if d.date() == today:
+        return "hoy " + d.strftime("%H:%M")
+    if d.date() == today - datetime.timedelta(days=1):
+        return "ayer " + d.strftime("%H:%M")
+    return d.strftime("%d/%m %H:%M")
 
 
 def search_workshop(text):
@@ -404,8 +476,8 @@ class App(ctk.CTk):
         super().__init__()
         ctk.set_appearance_mode("dark")
         self.title(APP_NAME)
-        self.geometry("460x700")
-        self.minsize(420, 660)
+        self.geometry("460x800")
+        self.minsize(420, 720)
         self.configure(fg_color=C["bg"])
         self.cfg = load_config()
         self.busy = False
@@ -622,6 +694,11 @@ class MainView(ctk.CTkFrame):
         self.mods_lbl = ctk.CTkLabel(inner, text="", font=font(12), text_color=C["muted"],
                                      anchor="w", justify="left", wraplength=360)
         self.mods_lbl.pack(fill="x", pady=(4, 0))
+        self.join_btn = ctk.CTkButton(inner, text="Unirse", height=36, corner_radius=10,
+                                      font=font(13, "bold"), fg_color=C["card2"], hover_color=C["border"],
+                                      border_width=1, border_color=C["accent"], text_color=C["accent"],
+                                      command=self.join)
+        self.host_owner = None
         self.report = None
 
         # Botón principal
@@ -654,9 +731,19 @@ class MainView(ctk.CTkFrame):
                                          border_color=C["danger"], text_color=C["danger"],
                                          hover_color="#2A1716", font=font(12), command=self.release)
 
-        # Tip
-        ctk.CTkLabel(self, text="Tip: en el juego elige Host. Tus amigos entran por invitación de Steam.",
-                     font=font(11), text_color=C["muted"], wraplength=400).pack(side="bottom", pady=(10, 0))
+        # Historial
+        hist = card(self)
+        hist.pack(fill="x", pady=(14, 0))
+        hhead = ctk.CTkFrame(hist, fg_color="transparent")
+        hhead.pack(fill="x", padx=16, pady=(12, 4))
+        ctk.CTkLabel(hhead, text="Últimas sesiones", font=font(13, "bold"),
+                     text_color=C["text"]).pack(side="left")
+        ctk.CTkButton(hhead, text="Ver todo", width=70, height=26, corner_radius=8, font=font(12),
+                      fg_color="transparent", hover_color=C["card2"], text_color=C["accent"],
+                      command=self.show_history).pack(side="right")
+        self.hist_box = ctk.CTkFrame(hist, fg_color="transparent")
+        self.hist_box.pack(fill="x", padx=16, pady=(0, 12))
+        self.sessions = []
 
         self.sync()
 
@@ -692,11 +779,52 @@ class MainView(ctk.CTkFrame):
             self.dot.configure(text_color=C["accent"])
             self.state_lbl.configure(text="Libre para jugar")
             self.release_btn.grid_forget()
+        self.host_owner = owner if owner and owner.lower() != me.lower() else None
+        if self.host_owner:
+            self.join_btn.configure(text=f"🎮  Unirse a la partida de {self.host_owner}")
+            self.join_btn.pack(fill="x", pady=(10, 0))
+        else:
+            self.join_btn.pack_forget()
         if last:
             self.sub_lbl.configure(text=f"Última vez: {last[0]} · {last[1]}")
         else:
             self.sub_lbl.configure(text="Aún no hay partidas guardadas. Usa Importar o juega la primera.")
         self.render_mods()
+        self.render_history()
+
+    def render_history(self):
+        for w in self.hist_box.winfo_children():
+            w.destroy()
+        try:
+            self.sessions = self.app.repo.history()
+        except Exception:  # noqa: BLE001
+            self.sessions = []
+        if not self.sessions:
+            ctk.CTkLabel(self.hist_box, text="Todavía no hay sesiones. ¡Juega la primera!",
+                         font=font(12), text_color=C["muted"]).pack(anchor="w")
+            return
+        for ses in self.sessions[:3]:
+            session_row(self.hist_box, ses)
+
+    def show_history(self):
+        self.render_history()
+        HistoryDialog(self, self.sessions)
+
+    def join(self):
+        owner = self.host_owner
+        if not owner:
+            return
+        if not game_running():
+            try:
+                launch_game(self.app.repo.folder)
+            except Exception as e:  # noqa: BLE001
+                return self.app.error(e)
+        open_steam_friends()
+        messagebox.showinfo(
+            APP_NAME,
+            f"Abrí el juego y tu lista de amigos de Steam.\n\n"
+            f"Cuando el juego llegue al menú: clic derecho en {owner} → «Unirse a la partida».\n\n"
+            "No hagas Host: la partida la tiene él.", parent=self)
 
     def render_mods(self):
         try:
@@ -729,6 +857,7 @@ class MainView(ctk.CTkFrame):
 
         def work():
             repo.pull()
+            repo.ensure_gitignore()
             return repo.lock_owner(), repo.last_session()
 
         def done(info):
@@ -937,8 +1066,8 @@ class ModsDialog(ctk.CTkToplevel):
         super().__init__(main.app)
         self.rep = rep
         self.title("Mods de la partida")
-        self.geometry("460x560")
-        self.minsize(400, 400)
+        self.geometry("460x680")
+        self.minsize(400, 480)
         self.configure(fg_color=C["bg"])
         self.transient(main.app)
 
@@ -946,6 +1075,38 @@ class ModsDialog(ctk.CTkToplevel):
                      text_color=C["text"]).pack(anchor="w", padx=20, pady=(18, 2))
         ctk.CTkLabel(self, text=f"{rep['active']} mods activos · {rep['wanted_ws']} items de Workshop",
                      font=font(12), text_color=C["muted"]).pack(anchor="w", padx=20)
+
+        # Pack de mods del grupo
+        self.main = main
+        pack = card(self)
+        pack.pack(fill="x", padx=20, pady=(14, 0))
+        ctk.CTkLabel(pack, text="📦  Pack de mods del grupo", font=font(13, "bold"),
+                     text_color=C["text"]).pack(anchor="w", padx=14, pady=(12, 2))
+        self.coll = collection_id(main.app.repo.group().get("collection", ""))
+        if self.coll:
+            ctk.CTkButton(pack, text="Abrir la colección en Steam (Suscribirse a todo)", height=38,
+                          corner_radius=10, font=font(13, "bold"), fg_color=C["accent"],
+                          hover_color=C["accent_h"], text_color="#0B0F0C",
+                          command=lambda: open_workshop(self.coll)).pack(fill="x", padx=14, pady=(6, 4))
+        else:
+            ctk.CTkLabel(pack, text="Crea una Colección en el Workshop con los mods de la partida y pega "
+                                    "su link aquí: tus amigos se suscriben a todo con un clic.",
+                         font=font(11), text_color=C["muted"], wraplength=380, justify="left",
+                         anchor="w").pack(fill="x", padx=14)
+        line = ctk.CTkFrame(pack, fg_color="transparent")
+        line.pack(fill="x", padx=14, pady=(6, 4))
+        self.coll_entry = ctk.CTkEntry(line, height=32, corner_radius=8, font=font(12),
+                                       placeholder_text="Link de la colección de Steam",
+                                       border_color=C["border"])
+        self.coll_entry.pack(side="left", fill="x", expand=True)
+        if self.coll:
+            self.coll_entry.insert(0, f"https://steamcommunity.com/sharedfiles/filedetails/?id={self.coll}")
+        ghost_button(line, "Guardar", self.save_collection, width=80).pack(side="left", padx=(8, 0))
+        if rep.get("wanted_ids"):
+            ctk.CTkButton(pack, text=f"Abrir los {len(rep['wanted_ids'])} mods de la partida uno por uno",
+                          height=30, corner_radius=8, font=font(12), fg_color="transparent",
+                          hover_color=C["card2"], text_color=C["accent"],
+                          command=self.open_all).pack(anchor="w", padx=8, pady=(0, 10))
 
         box = ctk.CTkScrollableFrame(self, fg_color=C["card"], corner_radius=12)
         box.pack(fill="both", expand=True, padx=20, pady=14)
@@ -968,7 +1129,6 @@ class ModsDialog(ctk.CTkToplevel):
             ctk.CTkLabel(box, text="✓ Todo en orden: los mods activos están instalados.",
                          font=font(13), text_color=C["accent"]).pack(anchor="w", padx=8, pady=8)
 
-        self.main = main
         if rep["unlisted_ws"]:
             ctk.CTkButton(self, text=f"Añadir {len(rep['unlisted_ws'])} items a WorkshopItems", height=38,
                           corner_radius=10, font=font(13), fg_color=C["card2"], hover_color=C["border"],
@@ -978,8 +1138,26 @@ class ModsDialog(ctk.CTkToplevel):
                           corner_radius=10, font=font(14, "bold"), fg_color=C["accent"],
                           hover_color=C["accent_h"], text_color="#0B0F0C",
                           command=self.open_steam).pack(fill="x", padx=20, pady=(0, 18))
-        else:
-            self.geometry("460x500")
+
+    def save_collection(self):
+        text = self.coll_entry.get().strip()
+        cid = collection_id(text)
+        if text and not cid:
+            return messagebox.showwarning(APP_NAME, "Ese link no parece de Steam. Copia el link de la "
+                                          "colección (…filedetails/?id=123456).", parent=self)
+        self.main.app.repo.set_group(collection=cid or "")
+        messagebox.showinfo(APP_NAME, "Guardado. Tus amigos lo verán cuando subas la partida "
+                            "(⤒ Subir partida o al terminar de jugar).", parent=self)
+        self.destroy()
+
+    def open_all(self):
+        ids = self.rep["wanted_ids"]
+        if not messagebox.askyesno(APP_NAME, f"Se abrirán {len(ids)} páginas en Steam, una por mod. "
+                                   "Dale «Suscribirse» en cada una.\n\n¿Continuar?", parent=self):
+            return
+        for wid in ids:
+            open_workshop(wid)
+            time.sleep(0.5)
 
     @staticmethod
     def link_rows(parent, title, color, rows):
@@ -1028,6 +1206,67 @@ class ModsDialog(ctk.CTkToplevel):
         for wid in ids:
             open_workshop(wid)
             time.sleep(0.5)
+
+
+def session_row(parent, ses, wrap=360):
+    line = ctk.CTkFrame(parent, fg_color="transparent")
+    line.pack(fill="x", pady=2)
+    initial = (ses["who"][:1] or "?").upper()
+    ctk.CTkLabel(line, text=initial, width=26, height=26, corner_radius=13, fg_color=C["card2"],
+                 font=font(12, "bold"), text_color=C["accent"]).pack(side="left")
+    ctk.CTkLabel(line, text=f"  {ses['who']}", font=font(12, "bold"), text_color=C["text"]).pack(side="left")
+    ctk.CTkLabel(line, text=fmt_minutes(ses["minutes"]), font=font(12), text_color=C["text"]).pack(side="right")
+    ctk.CTkLabel(line, text=f"  ·  {fmt_when(ses['start'])}", font=font(12),
+                 text_color=C["muted"]).pack(side="left")
+
+
+class HistoryDialog(ctk.CTkToplevel):
+    def __init__(self, main: MainView, sessions):
+        super().__init__(main.app)
+        self.title("Historial de la partida")
+        self.geometry("440x560")
+        self.minsize(380, 420)
+        self.configure(fg_color=C["bg"])
+        self.transient(main.app)
+
+        ctk.CTkLabel(self, text="Historial de la partida", font=font(17, "bold"),
+                     text_color=C["text"]).pack(anchor="w", padx=20, pady=(18, 2))
+        total = sum(s["minutes"] or 0 for s in sessions)
+        ctk.CTkLabel(self, text=f"{len(sessions)} sesiones · {fmt_minutes(total)} jugados en total",
+                     font=font(12), text_color=C["muted"]).pack(anchor="w", padx=20)
+
+        # Ranking por jugador
+        stats = {}
+        for s_ in sessions:
+            st = stats.setdefault(s_["who"], {"n": 0, "min": 0, "last": 0})
+            st["n"] += 1
+            st["min"] += s_["minutes"] or 0
+            st["last"] = max(st["last"], s_["end"])
+        rank = card(self)
+        rank.pack(fill="x", padx=20, pady=(14, 0))
+        ctk.CTkLabel(rank, text="Quién ha jugado más", font=font(13, "bold"),
+                     text_color=C["text"]).pack(anchor="w", padx=14, pady=(12, 6))
+        top = max([st["min"] for st in stats.values()] or [1]) or 1
+        medals = ["🥇", "🥈", "🥉"]
+        for i, (who, st) in enumerate(sorted(stats.items(), key=lambda kv: -kv[1]["min"])):
+            row = ctk.CTkFrame(rank, fg_color="transparent")
+            row.pack(fill="x", padx=14, pady=3)
+            ctk.CTkLabel(row, text=f"{medals[i] if i < 3 else '  '} {who}", font=font(12, "bold"),
+                         text_color=C["text"], width=130, anchor="w").pack(side="left")
+            ctk.CTkLabel(row, text=f"{fmt_minutes(st['min'])} · {st['n']}×", font=font(11),
+                         text_color=C["muted"]).pack(side="right")
+            bar = ctk.CTkProgressBar(row, height=8, progress_color=C["accent"], fg_color=C["card2"])
+            bar.set(st["min"] / top)
+            bar.pack(side="left", fill="x", expand=True, padx=8)
+        ctk.CTkFrame(rank, fg_color="transparent", height=8).pack()
+
+        box = ctk.CTkScrollableFrame(self, fg_color=C["card"], corner_radius=12)
+        box.pack(fill="both", expand=True, padx=20, pady=14)
+        if not sessions:
+            ctk.CTkLabel(box, text="Todavía no hay sesiones.", font=font(12),
+                         text_color=C["muted"]).pack(anchor="w", padx=8, pady=8)
+        for s_ in sessions:
+            session_row(box, s_)
 
 
 def already_running():

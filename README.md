@@ -44,3 +44,9 @@ Primera vez: tu nombre, link del repo de la partida y una carpeta **vacía** →
   `WorkshopItems=` con lo instalado en tu PC y muestra qué falta, qué está activo y qué no
   (con botón para abrir en Steam los mods que faltan). **Jugar** avisa si te faltan mods.
 - Un solo host a la vez (la app avisa si alguien ya está jugando).
+
+## Extras
+
+- **Unirse**: si otro está hosteando, la app abre el juego y tu lista de amigos de Steam para entrar a su partida.
+- **Historial**: últimas sesiones en la pantalla principal y, en *Ver todo*, quién ha jugado más y cuánto (sale de los commits).
+- **Pack de mods del grupo**: en *Mods de la partida* pega el link de una Colección del Workshop; se guarda en `pzshare.json` y todos ven el botón para suscribirse a todo con un clic.
