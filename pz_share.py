@@ -8,6 +8,7 @@ import datetime
 import getpass
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -223,6 +224,31 @@ def launch_game(folder: Path):
     # -cachedir hace que el juego use la carpeta compartida: no hay que tocar Steam.
     subprocess.Popen([exe, "-applaunch", STEAM_APP_ID, f"-cachedir={folder}"],
                      creationflags=NO_WINDOW)
+
+
+def steam_workshop_dirs():
+    """Carpetas donde Steam guarda los mods del Workshop de PZ (una por biblioteca)."""
+    exe = steam_exe()
+    if not exe:
+        return []
+    steam = Path(exe).parent
+    libs = [steam]
+    vdf = steam / "steamapps" / "libraryfolders.vdf"
+    if vdf.exists():
+        text = vdf.read_text(encoding="utf-8", errors="replace")
+        libs += [Path(m.replace("\\\\", "\\")) for m in re.findall(r'"path"\s+"([^"]+)"', text)]
+    return [d for d in (lib / "steamapps" / "workshop" / "content" / STEAM_APP_ID for lib in libs) if d.exists()]
+
+
+def missing_workshop_mods(folder: Path):
+    """IDs de Workshop que pide la partida compartida y no estan instalados en este PC."""
+    wanted = []
+    for ini in sorted((Path(folder) / "Server").glob("*.ini")):
+        for line in ini.read_text(encoding="utf-8", errors="replace").splitlines():
+            if line.startswith("WorkshopItems="):
+                wanted += [i.strip() for i in line.split("=", 1)[1].split(";") if i.strip().isdigit()]
+    installed = {p.name for d in steam_workshop_dirs() for p in d.iterdir()}
+    return [i for i in dict.fromkeys(wanted) if i not in installed]
 
 
 def find_local_servers():
@@ -490,6 +516,12 @@ class MainView(ctk.CTkFrame):
         self.sub_lbl = ctk.CTkLabel(inner, text="", font=font(12), text_color=C["muted"],
                                     anchor="w", justify="left")
         self.sub_lbl.pack(fill="x", pady=(6, 0))
+        self.mods_lbl = ctk.CTkLabel(inner, text="", font=font(12), text_color=C["warn"],
+                                     anchor="w", justify="left", wraplength=360)
+        self.mods_btn = ctk.CTkButton(inner, text="Abrir los mods que faltan en Steam", height=32,
+                                      corner_radius=8, fg_color=C["card2"], hover_color=C["border"],
+                                      text_color=C["text"], font=font(12), command=self.open_missing_mods)
+        self.missing = []
 
         # Botón principal
         self.play_btn = ctk.CTkButton(self, text="▶   Jugar", height=60, corner_radius=14,
@@ -561,6 +593,30 @@ class MainView(ctk.CTkFrame):
             self.sub_lbl.configure(text=f"Última vez: {last[0]} · {last[1]}")
         else:
             self.sub_lbl.configure(text="Aún no hay partidas guardadas. Usa Importar o juega la primera.")
+        self.render_mods()
+
+    def render_mods(self):
+        try:
+            self.missing = missing_workshop_mods(self.app.repo.folder)
+        except OSError:
+            self.missing = []
+        if self.missing:
+            self.mods_lbl.configure(text=f"⚠ Te faltan {len(self.missing)} mods de la partida. "
+                                         "Suscríbete en Steam antes de jugar.")
+            self.mods_lbl.pack(fill="x", pady=(8, 0))
+            self.mods_btn.pack(fill="x", pady=(8, 0))
+        else:
+            self.mods_lbl.pack_forget()
+            self.mods_btn.pack_forget()
+
+    def open_missing_mods(self):
+        if not messagebox.askyesno(
+                APP_NAME, f"Se abrirán {len(self.missing)} páginas de mods en Steam. "
+                          "Dale «Suscribirse» a cada una.\n\n¿Continuar?", parent=self):
+            return
+        for wid in self.missing:
+            webbrowser.open(f"steam://url/CommunityFilePage/{wid}")
+            time.sleep(0.5)
 
     # — acciones —
     def sync(self):
@@ -606,6 +662,14 @@ class MainView(ctk.CTkFrame):
                 if not ok:
                     self.set_busy(False, "")
                     return self.render((owner, repo.last_session()))
+            self.render_mods()
+            if self.missing and not messagebox.askyesno(
+                    APP_NAME,
+                    f"Te faltan {len(self.missing)} mods de la partida. Si entras así, el juego dará "
+                    "error o los desactivará.\n\n¿Jugar de todas formas?",
+                    icon="warning", parent=self):
+                self.set_busy(False, "")
+                return self.render((owner, repo.last_session()))
             self.app.bg(session, finished, failed)
 
         def session():
