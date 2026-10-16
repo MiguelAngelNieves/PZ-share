@@ -299,6 +299,8 @@ def mod_report(folder: Path):
         "unused_ws": [w for w in wanted_ws if w in ws_mods and ws_mods[w] and not (ws_mods[w] & active_ids)],
         # mod activo que viene de un item de Workshop que no esta en WorkshopItems: los demas no lo bajaran
         "unlisted": [m for m, _ in active if m in ws_of and ws_of[m] not in wanted_ws and m not in local],
+        "unlisted_ws": sorted({ws_of[m] for m, _ in active
+                               if m in ws_of and ws_of[m] not in wanted_ws and m not in local}),
         "ws_names": {w: next(iter(sorted(names[m] for m in ms if m in names)), w)
                      for w, ms in ws_mods.items() if ms},
     }
@@ -307,6 +309,27 @@ def mod_report(folder: Path):
     rep["lacking"] = len(missing_ws) + (0 if missing_ws else len(rep["missing_mods"]))
     rep["problems"] = rep["lacking"] + len(rep["unlisted"]) + len(rep["unused_ws"])
     return rep
+
+
+def add_workshop_items(folder: Path, ids):
+    """Agrega IDs de Workshop a WorkshopItems= de los .ini de la partida compartida. Devuelve cuantos."""
+    added = 0
+    for ini in sorted((Path(folder) / "Server").glob("*.ini")):
+        with open(ini, encoding="utf-8", newline="") as f:
+            lines = f.read().splitlines(keepends=True)
+        for i, line in enumerate(lines):
+            if line.startswith("WorkshopItems="):
+                body = line.rstrip("\r\n")
+                have = [x for x in body.split("=", 1)[1].split(";") if x.strip()]
+                new = [w for w in ids if w not in have]
+                lines[i] = "WorkshopItems=" + ";".join(have + new) + line[len(body):]
+                added += len(new)
+                break
+        else:
+            continue
+        with open(ini, "w", encoding="utf-8", newline="") as f:
+            f.writelines(lines)
+    return added
 
 
 def open_workshop(wid):
@@ -908,6 +931,11 @@ class ModsDialog(ctk.CTkToplevel):
             ctk.CTkLabel(box, text="✓ Todo en orden: los mods activos están instalados.",
                          font=font(13), text_color=C["accent"]).pack(anchor="w", padx=8, pady=8)
 
+        self.main = main
+        if rep["unlisted_ws"]:
+            ctk.CTkButton(self, text=f"Añadir {len(rep['unlisted_ws'])} items a WorkshopItems", height=38,
+                          corner_radius=10, font=font(13), fg_color=C["card2"], hover_color=C["border"],
+                          text_color=C["text"], command=self.fix_unlisted).pack(fill="x", padx=20, pady=(0, 10))
         if rep["missing_ws"]:
             ctk.CTkButton(self, text=f"Abrir {len(rep['missing_ws'])} mods en Steam", height=42,
                           corner_radius=10, font=font(14, "bold"), fg_color=C["accent"],
@@ -940,6 +968,20 @@ class ModsDialog(ctk.CTkToplevel):
         for it in items:
             ctk.CTkLabel(parent, text=f"• {it}", font=font(12), text_color=C["text"],
                          wraplength=380, justify="left", anchor="w").pack(fill="x", padx=8)
+
+    def fix_unlisted(self):
+        if game_running():
+            return messagebox.showinfo(APP_NAME, "Cierra el juego primero.", parent=self)
+        ids = self.rep["unlisted_ws"]
+        if not messagebox.askyesno(
+                APP_NAME, f"Se agregarán {len(ids)} items a WorkshopItems del archivo de la partida, "
+                          "para que tus amigos los descarguen solos. El cambio se sube al jugar.\n\n¿Continuar?",
+                parent=self):
+            return
+        add_workshop_items(self.main.app.repo.folder, ids)
+        self.main.render_mods()
+        self.destroy()
+        messagebox.showinfo(APP_NAME, "Listo. Se subirá la próxima vez que juegues.", parent=self.main)
 
     def open_steam(self):
         ids = self.rep["missing_ws"]
