@@ -308,6 +308,14 @@ def mod_report(folder: Path):
     return rep
 
 
+def open_workshop(wid):
+    """Abre la pagina del mod en el cliente de Steam; sin Steam, en el navegador."""
+    if steam_exe():
+        webbrowser.open(f"steam://url/CommunityFilePage/{wid}")
+    else:
+        webbrowser.open(f"https://steamcommunity.com/sharedfiles/filedetails/?id={wid}")
+
+
 def find_local_servers():
     srv = ZOMBOID_HOME / "Server"
     if not srv.exists():
@@ -876,8 +884,17 @@ class ModsDialog(ctk.CTkToplevel):
         box.pack(fill="both", expand=True, padx=20, pady=14)
         n = rep["names"]
         ws = rep["ws_names"]
-        self.section(box, "Te faltan (suscríbete en Steam)", C["danger"],
-                     [f"{ws.get(w, w)}  ·  Workshop {w}" for w in rep["missing_ws"]])
+        if rep["missing_ws"]:
+            ctk.CTkLabel(box, text="Te faltan (suscríbete en Steam)", font=font(12, "bold"),
+                         text_color=C["danger"], anchor="w").pack(fill="x", padx=8, pady=(10, 2))
+            for w in rep["missing_ws"]:
+                line = ctk.CTkFrame(box, fg_color="transparent")
+                line.pack(fill="x", padx=8, pady=2)
+                ctk.CTkButton(line, text="Abrir", width=64, height=28, corner_radius=8, font=font(12),
+                              fg_color=C["card2"], hover_color=C["border"], text_color=C["text"],
+                              command=lambda w=w: open_workshop(w)).pack(side="right")
+                ctk.CTkLabel(line, text=f"• Workshop {w}", font=font(12), text_color=C["text"],
+                             anchor="w").pack(side="left", fill="x", expand=True)
         extra = " (casi seguro vienen de los items que te faltan)" if rep["missing_ws"] else ""
         self.section(box, "Mods activos que no están en tu PC" + extra,
                      C["muted"] if rep["missing_ws"] else C["danger"], rep["missing_mods"])
@@ -913,7 +930,7 @@ class ModsDialog(ctk.CTkToplevel):
                                    "Dale «Suscribirse» a cada una.\n\n¿Continuar?", parent=self):
             return
         for wid in ids:
-            webbrowser.open(f"steam://url/CommunityFilePage/{wid}")
+            open_workshop(wid)
             time.sleep(0.5)
 
 
