@@ -95,17 +95,25 @@ def git(args, cwd, check=True):
 
 
 def friendly(err):
-    """Traduce errores de git a algo entendible."""
-    s = str(err).lower()
-    if "could not resolve host" in s or "unable to access" in s:
-        return "Sin conexión con GitHub. Revisa tu internet."
-    if "authentication" in s or "terminal prompts disabled" in s or "403" in s:
-        return "GitHub no te dejó entrar. Pide que te agreguen al repo e inicia sesión cuando se abra el navegador."
-    if "not found" in s and "repository" in s:
-        return "No se encontró el repo. Revisa el link y que tengas acceso."
-    if "conflict" in s:
-        return "Hubo un conflicto: alguien jugó al mismo tiempo. Avísale al grupo antes de seguir."
-    return str(err)
+    """Traduce errores de git a algo entendible, sin ocultar el detalle real."""
+    raw = str(err).strip()
+    s = raw.lower()
+    if "publickey" in s or "host key verification" in s:
+        msg = ("El repo está conectado por SSH y no tienes llave configurada. "
+               "Usa el link HTTPS (https://github.com/...) en Ajustes.")
+    elif ("authentication" in s or "terminal prompts disabled" in s or "403" in s
+          or "permission to" in s or "denied" in s):
+        msg = ("GitHub no te dejó entrar. Revisa que aceptaste la invitación al repo "
+               "y que iniciaste sesión con la cuenta correcta.")
+    elif "not found" in s and "repository" in s:
+        msg = "No se encontró el repo. Revisa el link y que aceptaste la invitación."
+    elif "could not resolve host" in s or "unable to access" in s:
+        msg = "Sin conexión con GitHub. Revisa tu internet."
+    elif "conflict" in s:
+        msg = "Hubo un conflicto: alguien jugó al mismo tiempo. Avísale al grupo antes de seguir."
+    else:
+        return raw
+    return f"{msg}\n\nDetalle: {raw.splitlines()[-1][:300]}"
 
 
 class Repo:
@@ -635,8 +643,10 @@ class MainView(ctk.CTkFrame):
         self.sync_btn = ghost_button(row, "⟳  Sincronizar", self.sync)
         self.sync_btn.grid(row=0, column=0, sticky="ew", padx=(0, 5))
         ghost_button(row, "Abrir carpeta", self.open_folder).grid(row=0, column=1, sticky="ew", padx=(5, 0))
-        self.import_btn = ghost_button(row, "⤓  Importar partida existente", self.import_dialog)
-        self.import_btn.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        self.upload_btn = ghost_button(row, "⤒  Subir partida", self.upload)
+        self.upload_btn.grid(row=1, column=0, sticky="ew", padx=(0, 5), pady=(10, 0))
+        self.import_btn = ghost_button(row, "⤓  Importar partida", self.import_dialog)
+        self.import_btn.grid(row=1, column=1, sticky="ew", padx=(5, 0), pady=(10, 0))
         self.mods_btn = ghost_button(row, "Mods de la partida", self.show_mods)
         self.mods_btn.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(10, 0))
         self.release_btn = ctk.CTkButton(row, text="Liberar partida (quedó marcada como mía)", height=34,
@@ -654,7 +664,7 @@ class MainView(ctk.CTkFrame):
     def set_busy(self, busy, text=""):
         self.app.busy = busy
         state = "disabled" if busy else "normal"
-        for b in (self.play_btn, self.sync_btn, self.import_btn):
+        for b in (self.play_btn, self.sync_btn, self.upload_btn, self.import_btn):
             b.configure(state=state)
         self.step_lbl.configure(text=text)
         if busy:
@@ -811,6 +821,33 @@ class MainView(ctk.CTkFrame):
         self.state_lbl.configure(text="Estás jugando")
         self.sub_lbl.configure(text="No cierres PZ Share. Puedes minimizarla.")
         self.release_btn.grid_forget()
+
+    def upload(self):
+        """Sube a mano lo que haya cambiado (por si se jugó sin abrir desde PZ Share)."""
+        if self.app.busy:
+            return
+        if game_running():
+            return messagebox.showinfo(APP_NAME, "Cierra el juego primero para no subir una partida a medias.",
+                                       parent=self)
+        repo = self.app.repo
+        self.set_busy(True, "Subiendo la partida…")
+
+        def work():
+            stamp = datetime.datetime.now().strftime("%d/%m %H:%M")
+            changed = repo.commit_all(f"Partida de {repo.player} · {stamp}")
+            repo.push()
+            return changed, (repo.lock_owner(), repo.last_session())
+
+        def done(res):
+            changed, info = res
+            self.set_busy(False, "Partida subida ✓" if changed else "No había cambios para subir")
+            self.render(info)
+
+        def fail(err):
+            self.set_busy(False, "")
+            self.app.error(err)
+
+        self.app.bg(work, done, fail)
 
     def release(self):
         if game_running():
