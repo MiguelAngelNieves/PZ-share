@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PZ Live Map</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  :root { --bg:#0f1311; --card:#181e1b; --card2:#202824; --border:#2a332e; --text:#e8edea;
+          --muted:#8a968f; --accent:#5cc26b; --warn:#e3b341; --danger:#e5534b; }
+  * { box-sizing: border-box; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--text);
+               font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  #map { position:absolute; inset:0; background:#0b0e0c; }
+  .leaflet-container { background:#0b0e0c; font: inherit; }
+  .bar { position:absolute; z-index:1000; top:12px; left:12px; right:12px; display:flex; gap:10px;
+         align-items:center; pointer-events:none; }
+  .pill { pointer-events:auto; background:rgba(24,30,27,.92); border:1px solid var(--border);
+          border-radius:12px; padding:8px 12px; backdrop-filter: blur(6px); }
+  .title { font-weight:700; font-size:15px; }
+  .muted { color:var(--muted); }
+  .live { display:inline-flex; align-items:center; gap:6px; }
+  .dot { width:9px; height:9px; border-radius:50%; background:var(--muted); display:inline-block; }
+  .dot.on { background:var(--accent); box-shadow:0 0 0 0 rgba(92,194,107,.7); animation:pulse 1.6s infinite; }
+  @keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(92,194,107,.6)} 70%{box-shadow:0 0 0 8px rgba(92,194,107,0)} 100%{box-shadow:0 0 0 0 rgba(92,194,107,0)} }
+  .spacer { flex:1; }
+  .panel { position:absolute; z-index:1000; top:64px; right:12px; width:290px; max-height:calc(100% - 140px);
+           overflow:auto; background:rgba(24,30,27,.94); border:1px solid var(--border); border-radius:14px;
+           padding:12px; }
+  .panel h3 { margin:4px 0 8px; font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); }
+  .player { display:grid; grid-template-columns: 30px 1fr auto; gap:8px; align-items:center; padding:8px;
+            border-radius:10px; cursor:pointer; border:1px solid transparent; }
+  .player:hover { background:var(--card2); }
+  .player.following { border-color: var(--accent); background:var(--card2); }
+  .avatar { width:30px; height:30px; border-radius:50%; display:grid; place-items:center; font-weight:700;
+            color:#0b0f0c; }
+  .hp { height:5px; background:var(--card2); border-radius:3px; overflow:hidden; margin-top:4px; }
+  .hp > i { display:block; height:100%; background:var(--accent); }
+  .sub { font-size:12px; color:var(--muted); }
+  .off { opacity:.45; }
+  .events { margin-top:12px; border-top:1px solid var(--border); padding-top:8px; }
+  .ev { font-size:12px; padding:3px 0; color:var(--text); }
+  .ev time { color:var(--muted); margin-right:6px; }
+  .ev.death { color:#ff8a84; } .ev.join { color:#9fe3a8; } .ev.leave { color:var(--muted); }
+  .btn { pointer-events:auto; background:var(--card2); color:var(--text); border:1px solid var(--border);
+         border-radius:10px; padding:7px 10px; cursor:pointer; font: inherit; }
+  .btn.on { border-color:var(--accent); color:var(--accent); }
+  .coords { position:absolute; z-index:1000; left:12px; bottom:12px; font-variant-numeric: tabular-nums; }
+  .marker { position:relative; }
+  .marker .pin { width:30px; height:30px; border-radius:50%; border:3px solid #0b0f0c; display:grid;
+                 place-items:center; font-weight:800; color:#0b0f0c; box-shadow:0 2px 10px rgba(0,0,0,.6); }
+  .marker .label { position:absolute; left:50%; top:34px; transform:translateX(-50%); white-space:nowrap;
+                   background:rgba(11,14,12,.85); padding:2px 7px; border-radius:6px; font-size:12px; font-weight:600; }
+  .marker.off .pin { filter: grayscale(1); opacity:.6; }
+  .town { color:#cfd8d3; font-weight:700; font-size:13px; text-shadow:0 1px 3px #000; white-space:nowrap;
+          letter-spacing:.04em; text-transform:uppercase; transform:translate(-50%,-50%); }
+  .empty { color:var(--muted); font-size:13px; padding:6px; }
+  .gate { position:absolute; inset:0; z-index:2000; display:none; place-items:center; background:var(--bg); }
+  .gate .pill { padding:20px; width:300px; }
+  .gate input { width:100%; padding:9px; border-radius:8px; border:1px solid var(--border); background:var(--card2);
+                color:var(--text); margin:10px 0; }
+  @media (max-width: 640px) {
+    .panel { left:12px; right:12px; width:auto; top:auto; bottom:52px; max-height:38%; }
+    .hide-sm { display:none; }
+    .bar { gap:6px; } .pill, .btn { padding:6px 9px; font-size:12px; } .title { font-size:13px; }
+    .leaflet-bottom.leaflet-right { bottom: 42%; }
+  }
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<div class="bar">
+  <div class="pill"><span class="title" id="title">PZ Live Map</span></div>
+  <div class="pill live"><span class="dot" id="livedot"></span><span id="livetxt">Conectando…</span></div>
+  <div class="pill hide-sm" id="clock"><span class="muted">Sin datos de la partida</span></div>
+  <div class="spacer"></div>
+  <button class="btn on" id="btnTrails" title="Mostrar u ocultar rastros">Rastros</button>
+  <button class="btn" id="btnFit" title="Ver a todos">Ver a todos</button>
+</div>
+
+<div class="panel">
+  <h3>Jugadores</h3>
+  <div id="players"><div class="empty">Esperando a que alguien juegue…</div></div>
+  <div class="events">
+    <h3>Actividad</h3>
+    <div id="events"><div class="empty">Sin actividad todavía.</div></div>
+  </div>
+</div>
+
+<div class="pill coords muted" id="coords">x —, y —</div>
+
+<div class="gate" id="gate">
+  <div class="pill">
+    <div class="title">Llave de acceso</div>
+    <div class="muted">Pídela al que montó el mapa.</div>
+    <input id="keyInput" placeholder="Llave" autocomplete="off">
+    <button class="btn on" id="keyBtn">Entrar</button>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+// Base relativa: funciona en / o detrás de un subpath (p. ej. Tailscale /pzmap/)
+const BASE = location.pathname.endsWith("/") ? location.pathname : location.pathname + "/";
+const params = new URLSearchParams(location.search);
+let KEY = params.get("k") || localStorage.getItem("pzmap_key") || "";
+const api = (p) => BASE + p + (KEY ? (p.includes("?") ? "&" : "?") + "k=" + encodeURIComponent(KEY) : "");
+
+const WORLD = { w: 20000, h: 16000 };
+const ll = (x, y) => L.latLng(-y, x);
+const map = L.map("map", { crs: L.CRS.Simple, minZoom: -6, maxZoom: 3, zoomSnap: 0.25,
+                           attributionControl: false, zoomControl: false });
+L.control.zoom({ position: "bottomright" }).addTo(map);
+map.fitBounds([ll(0, 0), ll(WORLD.w, WORLD.h)]);
+
+// Cuadrícula: celdas de 300 tiles, como el mapa del juego
+const Grid = L.GridLayer.extend({
+  createTile(c) {
+    const t = document.createElement("canvas"), s = this.getTileSize();
+    t.width = s.x; t.height = s.y;
+    const g = t.getContext("2d"), z = Math.pow(2, c.z);
+    const x0 = c.x * s.x / z, y0 = c.y * s.y / z, span = s.x / z;
+    g.fillStyle = "#0e1210"; g.fillRect(0, 0, s.x, s.y);
+    const steps = z >= 1 ? [10, 100, 300] : z >= 0.06 ? [100, 300] : z >= 0.03 ? [300] : [1500];
+    for (const step of steps) {
+      g.strokeStyle = step >= 300 ? "rgba(92,194,107,.22)" : step === 100 ? "rgba(255,255,255,.05)" : "rgba(255,255,255,.03)";
+      g.lineWidth = step >= 300 ? 1.2 : 1;
+      g.beginPath();
+      for (let x = Math.ceil(x0 / step) * step; x <= x0 + span; x += step) { const px = (x - x0) * z; g.moveTo(px, 0); g.lineTo(px, s.y); }
+      for (let y = Math.ceil(y0 / step) * step; y <= y0 + span; y += step) { const py = (y - y0) * z; g.moveTo(0, py); g.lineTo(s.x, py); }
+      g.stroke();
+    }
+    if (z >= 0.12) {
+      g.fillStyle = "rgba(138,150,143,.55)"; g.font = "10px system-ui";
+      for (let x = Math.ceil(x0 / 300) * 300; x < x0 + span; x += 300)
+        for (let y = Math.ceil(y0 / 300) * 300; y < y0 + span; y += 300)
+          g.fillText(`${x / 300},${y / 300}`, (x - x0) * z + 3, (y - y0) * z + 11);
+    }
+    return t;
+  }
+});
+
+let trailsOn = true, follow = localStorage.getItem("pzmap_follow") || "", fitted = false;
+const markers = {}, trails = {};
+const colors = ["#5cc26b", "#e3b341", "#5aa9e6", "#e07be0", "#f08a5d", "#7ce0d3", "#c3e05a", "#ff7a90"];
+const colorOf = (n) => { let h = 0; for (const ch of n) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return colors[h % colors.length]; };
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const ago = (t, now) => { const s = Math.max(0, Math.round(now - t)); return s < 60 ? `hace ${s}s` : s < 3600 ? `hace ${Math.round(s / 60)} min` : `hace ${Math.round(s / 3600)} h`; };
+
+async function boot() {
+  const cfg = await fetch(BASE + "config.json").then((r) => r.json()).catch(() => ({}));
+  document.title = cfg.title || "PZ Live Map";
+  document.getElementById("title").textContent = cfg.title || "PZ Live Map";
+  if (cfg.tiles) L.tileLayer(cfg.tiles, { noWrap: true, minZoom: -6, maxZoom: 3 }).addTo(map);
+  else new Grid({ tileSize: 256, noWrap: true }).addTo(map);
+  if (cfg.image && cfg.image_bounds) {
+    const [x0, y0, x1, y1] = cfg.image_bounds;
+    L.imageOverlay(BASE + "map.png", [ll(x0, y0), ll(x1, y1)], { opacity: 0.9 }).addTo(map);
+  }
+  const towns = await fetch(BASE + "towns.json").then((r) => r.json()).catch(() => []);
+  for (const t of towns)
+    L.marker(ll(t.x, t.y), { interactive: false, icon: L.divIcon({ className: "", html: `<div class="town">${esc(t.name)}</div>` }) }).addTo(map);
+  if (cfg.need_key && !KEY) return showGate();
+  connect();
+}
+
+function showGate() {
+  const gate = document.getElementById("gate"); gate.style.display = "grid";
+  document.getElementById("keyBtn").onclick = () => {
+    KEY = document.getElementById("keyInput").value.trim();
+    try { localStorage.setItem("pzmap_key", KEY); } catch (e) {}
+    gate.style.display = "none"; connect();
+  };
+}
+
+function connect() {
+  const es = new EventSource(api("api/stream"));
+  es.onmessage = (e) => { setLive(true); render(JSON.parse(e.data)); };
+  es.onerror = () => { setLive(false); };
+  fetch(api("api/state")).then((r) => { if (r.status === 403) { es.close(); localStorage.removeItem("pzmap_key"); KEY = ""; showGate(); } });
+}
+
+function setLive(ok) {
+  document.getElementById("livedot").className = "dot" + (ok ? " on" : "");
+  document.getElementById("livetxt").textContent = ok ? "En vivo" : "Reconectando…";
+}
+
+function render(s) {
+  const w = s.world || {}, now = s.now;
+  const fresh = s.updated && now - s.updated < 30;
+  document.getElementById("clock").innerHTML = s.updated
+    ? `Día <b>${w.day || "?"}</b> · ${String(w.hour ?? 0).padStart(2, "0")}:${String(w.minute ?? 0).padStart(2, "0")}` +
+      (w.host ? ` · host <b>${esc(w.host)}</b>` : "") + (fresh ? "" : ` <span class="muted">· ${ago(s.updated, now)}</span>`)
+    : `<span class="muted">Sin datos de la partida</span>`;
+
+  const list = document.getElementById("players");
+  list.innerHTML = s.players.length ? "" : `<div class="empty">Esperando a que alguien juegue…</div>`;
+  const seen = new Set();
+  for (const p of s.players) {
+    seen.add(p.name);
+    const col = colorOf(p.name), hp = Math.round(p.hp ?? 100);
+    const state = p.dead ? "💀 muerto" : p.vehicle ? `🚗 ${esc(String(p.vehicle).replace(/^Base\./, ""))}` : p.z > 0 ? `piso ${p.z}` : "a pie";
+    const row = document.createElement("div");
+    row.className = "player" + (p.online ? "" : " off") + (follow === p.name ? " following" : "");
+    row.innerHTML = `<div class="avatar" style="background:${col}">${esc(p.name[0] || "?").toUpperCase()}</div>
+      <div><div><b>${esc(p.name)}</b></div>
+      <div class="sub">${p.online ? state : "desconectado · " + ago(p.seen, now)}</div>
+      <div class="hp"><i style="width:${hp}%;background:${hp < 35 ? "var(--danger)" : hp < 70 ? "var(--warn)" : "var(--accent)"}"></i></div></div>
+      <div class="sub">${follow === p.name ? "siguiendo" : Math.round(p.x) + "," + Math.round(p.y)}</div>`;
+    row.onclick = () => { follow = follow === p.name ? "" : p.name; try { localStorage.setItem("pzmap_follow", follow); } catch (e) {}
+                          map.flyTo(ll(p.x, p.y), Math.max(map.getZoom(), 0)); render(s); };
+    list.appendChild(row);
+
+    const html = `<div class="marker${p.online ? "" : " off"}"><div class="pin" style="background:${col}">${p.dead ? "☠" : p.vehicle ? "🚗" : esc(p.name[0] || "?").toUpperCase()}</div><div class="label">${esc(p.name)}</div></div>`;
+    const icon = L.divIcon({ className: "", html, iconSize: [30, 30], iconAnchor: [15, 15] });
+    if (!markers[p.name]) markers[p.name] = L.marker(ll(p.x, p.y), { icon, zIndexOffset: 1000 }).addTo(map)
+      .on("click", () => { follow = p.name; map.flyTo(ll(p.x, p.y), Math.max(map.getZoom(), 0)); });
+    else { markers[p.name].setLatLng(ll(p.x, p.y)); markers[p.name].setIcon(icon); }
+    markers[p.name].bindTooltip(`${esc(p.name)} · ${hp}% vida · x ${Math.round(p.x)}, y ${Math.round(p.y)}`, { direction: "top", offset: [0, -16] });
+
+    const pts = (p.trail || []).map(([x, y]) => ll(x, y));
+    if (!trails[p.name]) trails[p.name] = L.polyline(pts, { color: col, weight: 3, opacity: 0.55 });
+    else trails[p.name].setLatLngs(pts);
+    if (trailsOn) trails[p.name].addTo(map); else trails[p.name].remove();
+
+    if (follow === p.name && p.online) map.panTo(ll(p.x, p.y), { animate: true });
+  }
+  for (const n of Object.keys(markers)) if (!seen.has(n)) { markers[n].remove(); trails[n]?.remove(); delete markers[n]; delete trails[n]; }
+
+  if (!fitted && s.players.some((p) => p.online)) { fitAll(s); fitted = true; }
+  window.__last = s;
+
+  const ev = document.getElementById("events");
+  ev.innerHTML = s.events.length ? s.events.map((e) =>
+    `<div class="ev ${e.kind}"><time>${new Date(e.t * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time>${esc(e.text)}</div>`).join("")
+    : `<div class="empty">Sin actividad todavía.</div>`;
+}
+
+function fitAll(s) {
+  const pts = (s || window.__last || { players: [] }).players.filter((p) => p.online).map((p) => ll(p.x, p.y));
+  if (pts.length === 1) map.flyTo(pts[0], 0); else if (pts.length) map.flyToBounds(L.latLngBounds(pts).pad(0.4), { maxZoom: 0 });
+}
+
+document.getElementById("btnFit").onclick = () => { follow = ""; fitAll(); };
+document.getElementById("btnTrails").onclick = (e) => {
+  trailsOn = !trailsOn; e.target.classList.toggle("on", trailsOn);
+  for (const t of Object.values(trails)) trailsOn ? t.addTo(map) : t.remove();
+};
+map.on("mousemove", (e) => { document.getElementById("coords").textContent = `x ${Math.round(e.latlng.lng)}, y ${Math.round(-e.latlng.lat)} · celda ${Math.floor(e.latlng.lng / 300)},${Math.floor(-e.latlng.lat / 300)}`; });
+map.on("dragstart", () => { follow = ""; });
+boot();
+</script>
+</body>
+</html>

@@ -1,0 +1,10 @@
+services:
+  pzmap:
+    build: .
+    container_name: pzmap
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8095:8095"   # solo local; se publica con Tailscale
+    env_file: .env
+    volumes:
+      - ./data:/data

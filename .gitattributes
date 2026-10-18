@@ -1,0 +1,2 @@
+*.sh text eol=lf
+livemap/** text eol=lf

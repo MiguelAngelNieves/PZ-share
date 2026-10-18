@@ -1,0 +1,5 @@
+name=PZ Live Map
+id=PZLiveMap
+description=Escribe la posición de los jugadores en Zomboid/Lua/pzlivemap.json para el mapa en vivo de PZ Share. No cambia nada del juego.
+modversion=1.0
+versionMin=42.0.0

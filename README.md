@@ -51,3 +51,14 @@ Primera vez: tu nombre, link del repo de la partida y una carpeta **vacía** →
 - **Historial**: últimas sesiones en la pantalla principal y, en *Ver todo*, quién ha jugado más y cuánto (sale de los commits).
 - **Mods con vista previa**: cada mod de la partida sale como tarjeta con imagen, descripción, suscriptores y si es de B42 (datos públicos de Steam). Filtra por *Me faltan* / *Instalados*, suscríbete uno por uno o a todos los que faltan.
 - **Pack de mods del grupo** (opcional): en *Mods de la partida* pega el link de una Colección del Workshop; se guarda en `pzshare.json` y todos ven el botón para suscribirse a todo con un clic.
+
+## Mapa en vivo
+
+Una web con la posición de cada jugador en tiempo real (vida, vehículo, rastros y actividad).
+
+- `mod/PZLiveMap`: mod de Lua para Build 42 que escribe las posiciones en `Zomboid/Lua/pzlivemap.json`.
+- PZ Share lo lee mientras el juego está abierto y lo envía al servidor del mapa.
+- `livemap/`: el servidor del mapa (FastAPI + Leaflet, Docker), pensado para una Raspberry Pi. Ver `livemap/README.md`.
+
+En PZ Share: **🗺 Mapa en vivo** → dirección, token → **Instalar el mod en la partida** → **⤒ Subir partida**.
+El mod va dentro de la partida (`mods/`), así que a tus amigos les llega solo.

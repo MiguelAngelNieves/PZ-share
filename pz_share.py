@@ -16,6 +16,7 @@ import threading
 import time
 import io
 import urllib.parse
+import urllib.error
 import urllib.request
 import webbrowser
 from pathlib import Path
@@ -41,6 +42,7 @@ GITIGNORE = """# PZ Share: solo se comparte la partida. Graficos, teclas y logs 
 !/.gitignore
 !/host.lock
 !/pzshare.json
+!/mods/
 !/Saves/
 /Saves/*
 !/Saves/Multiplayer/
@@ -147,8 +149,9 @@ class Repo:
             gi.write_text(GITIGNORE, encoding="utf-8")
             return True
         text = gi.read_text(encoding="utf-8", errors="replace")
-        if f"!/{GROUP_FILE}" not in text:  # repos creados con versiones viejas
-            gi.write_text(text.rstrip("\n") + f"\n!/{GROUP_FILE}\n", encoding="utf-8")
+        missing = [ln for ln in (f"!/{GROUP_FILE}", "!/mods/") if ln not in text.splitlines()]
+        if missing:  # repos creados con versiones viejas
+            gi.write_text(text.rstrip("\n") + "\n" + "\n".join(missing) + "\n", encoding="utf-8")
             return True
         return False
 
@@ -541,6 +544,112 @@ def import_server(name: str, dest: Path):
     return copied
 
 
+# ───────────────────────── Mapa en vivo ─────────────────────────
+LIVEMAP_MOD = "PZLiveMap"
+LIVEMAP_FILES = ("pzlivemap.json", "pzlivemap_client.json")  # los escribe el mod en <carpeta>/Lua/
+
+
+def resource(*parts):
+    """Ruta a archivos que vienen con la app (también dentro del .exe de PyInstaller)."""
+    base = Path(getattr(sys, "_MEIPASS", Path(__file__).parent))
+    return base.joinpath(*parts)
+
+
+def livemap_installed(folder: Path):
+    return (Path(folder) / "mods" / LIVEMAP_MOD / "42" / "mod.info").exists()
+
+
+def install_livemap(folder: Path):
+    """Copia el mod a <carpeta>/mods (viaja con la partida) y lo activa en Mods= del servidor."""
+    src = resource("mod", LIVEMAP_MOD)
+    if not src.exists():
+        raise RuntimeError("No encontré el mod PZLiveMap junto a la app (carpeta mod/).")
+    dest = Path(folder) / "mods" / LIVEMAP_MOD
+    shutil.copytree(src, dest, dirs_exist_ok=True)
+    activated = 0
+    for ini in sorted((Path(folder) / "Server").glob("*.ini")):
+        with open(ini, encoding="utf-8", newline="") as f:
+            lines = f.read().splitlines(keepends=True)
+        for i, line in enumerate(lines):
+            if line.startswith("Mods="):
+                body = line.rstrip("\r\n")
+                mods = [m for m in body[5:].split(";") if m.strip()]
+                if not any(m.strip().split("\\")[-1] == LIVEMAP_MOD for m in mods):
+                    lines[i] = "Mods=" + ";".join(mods + [LIVEMAP_MOD]) + line[len(body):]
+                    activated += 1
+                break
+        with open(ini, "w", encoding="utf-8", newline="") as f:
+            f.writelines(lines)
+    return activated
+
+
+class LiveRelay(threading.Thread):
+    """Mientras el juego está abierto, manda al mapa en vivo lo que escribe el mod."""
+
+    def __init__(self, app):
+        super().__init__(daemon=True)
+        self.app = app
+        self.status = "apagado"
+        self.sent = 0
+        self.last_ok = 0
+        self.last_mtime = 0
+
+    def config(self):
+        try:
+            repo = self.app.repo
+            return repo, repo.group().get("livemap") or {}
+        except Exception:  # noqa: BLE001
+            return None, {}
+
+    def pick_file(self, folder: Path):
+        best = None
+        for name in LIVEMAP_FILES:  # el del servidor primero: trae a todos los jugadores
+            f = Path(folder) / "Lua" / name
+            try:
+                m = f.stat().st_mtime
+            except OSError:
+                continue
+            if time.time() - m < 30 and (best is None or name == LIVEMAP_FILES[0] or m > best[1] + 10):
+                best = (f, m)
+                if name == LIVEMAP_FILES[0]:
+                    break
+        return best
+
+    def run(self):
+        while True:
+            time.sleep(3)
+            repo, cfg = self.config()
+            if not repo or not cfg.get("url") or not cfg.get("token"):
+                self.status = "sin configurar"
+                continue
+            if not game_running():
+                self.status = "esperando a que abras el juego"
+                continue
+            found = self.pick_file(repo.folder)
+            if not found:
+                self.status = "juego abierto, esperando datos del mod"
+                continue
+            f, mtime = found
+            if mtime == self.last_mtime:
+                continue
+            try:
+                data = json.loads(f.read_text(encoding="utf-8", errors="replace"))
+                data["host"] = repo.player
+                req = urllib.request.Request(
+                    cfg["url"].rstrip("/") + "/api/update", data=json.dumps(data).encode("utf-8"),
+                    headers={"Authorization": f"Bearer {cfg['token']}", "Content-Type": "application/json",
+                             "User-Agent": "PZShare"})
+                urllib.request.urlopen(req, timeout=8).read()
+                self.last_mtime = mtime
+                self.sent += 1
+                self.last_ok = time.time()
+                self.status = f"en vivo · {len(data.get('players', []))} jugadores"
+            except urllib.error.HTTPError as e:
+                self.status = "token inválido" if e.code == 401 else f"error {e.code} del mapa"
+            except Exception as e:  # noqa: BLE001
+                self.status = f"sin conexión con el mapa ({type(e).__name__})"
+
+
 # ───────────────────────── UI helpers ─────────────────────────
 def font(size=13, weight="normal"):
     return ctk.CTkFont(family=FONT, size=size, weight=weight)
@@ -571,6 +680,8 @@ class App(ctk.CTk):
         self.playing = False
         self.view = None
         self.protocol("WM_DELETE_WINDOW", self.on_close)
+        self.relay = LiveRelay(self)
+        self.relay.start()
         if self.cfg.get("folder") and (Path(self.cfg["folder"]) / ".git").exists():
             self.show_main()
         else:
@@ -812,7 +923,9 @@ class MainView(ctk.CTkFrame):
         self.import_btn = ghost_button(row, "⤓  Importar partida", self.import_dialog)
         self.import_btn.grid(row=1, column=1, sticky="ew", padx=(5, 0), pady=(10, 0))
         self.mods_btn = ghost_button(row, "Mods de la partida", self.show_mods)
-        self.mods_btn.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        self.mods_btn.grid(row=2, column=0, sticky="ew", padx=(0, 5), pady=(10, 0))
+        self.map_btn = ghost_button(row, "🗺  Mapa en vivo", self.show_livemap)
+        self.map_btn.grid(row=2, column=1, sticky="ew", padx=(5, 0), pady=(10, 0))
         self.release_btn = ctk.CTkButton(row, text="Liberar partida (quedó marcada como mía)", height=34,
                                          corner_radius=10, fg_color="transparent", border_width=1,
                                          border_color=C["danger"], text_color=C["danger"],
@@ -892,6 +1005,9 @@ class MainView(ctk.CTkFrame):
             return
         for ses in self.sessions[:3]:
             session_row(self.hist_box, ses)
+
+    def show_livemap(self):
+        LiveMapDialog(self)
 
     def show_history(self):
         self.render_history()
@@ -1414,6 +1530,107 @@ class ModsDialog(ctk.CTkToplevel):
         for wid in ids:
             open_workshop(wid)
             time.sleep(0.5)
+
+
+class LiveMapDialog(ctk.CTkToplevel):
+    def __init__(self, main: MainView):
+        super().__init__(main.app)
+        self.main = main
+        self.repo = main.app.repo
+        cfg = self.repo.group().get("livemap") or {}
+        self.title("Mapa en vivo")
+        self.geometry("460x560")
+        self.resizable(False, False)
+        self.configure(fg_color=C["bg"])
+        self.transient(main.app)
+
+        ctk.CTkLabel(self, text="🗺  Mapa en vivo", font=font(18, "bold"),
+                     text_color=C["text"]).pack(anchor="w", padx=20, pady=(18, 2))
+        ctk.CTkLabel(self, text="Muestra en una web dónde está cada jugador mientras juegan.",
+                     font=font(12), text_color=C["muted"]).pack(anchor="w", padx=20)
+
+        st = card(self)
+        st.pack(fill="x", padx=20, pady=(14, 0))
+        self.status = ctk.CTkLabel(st, text="", font=font(13, "bold"), text_color=C["text"], anchor="w")
+        self.status.pack(fill="x", padx=14, pady=(12, 2))
+        self.mod_lbl = ctk.CTkLabel(st, text="", font=font(12), text_color=C["muted"], anchor="w")
+        self.mod_lbl.pack(fill="x", padx=14, pady=(0, 12))
+
+        form = card(self)
+        form.pack(fill="x", padx=20, pady=(12, 0))
+        self.url = self.field(form, "Dirección del mapa", "https://tu-pi.ts.net/pzmap/", cfg.get("url", ""))
+        self.token = self.field(form, "Token para enviar", "el PZMAP_TOKEN de la Pi", cfg.get("token", ""))
+        self.view = self.field(form, "Llave para ver (opcional)", "el PZMAP_VIEW_KEY, si pusiste uno",
+                               cfg.get("view", ""))
+        ctk.CTkFrame(form, fg_color="transparent", height=6).pack()
+
+        row = ctk.CTkFrame(self, fg_color="transparent")
+        row.pack(fill="x", padx=20, pady=(14, 0))
+        row.grid_columnconfigure((0, 1), weight=1)
+        ghost_button(row, "Guardar", self.save).grid(row=0, column=0, sticky="ew", padx=(0, 5))
+        ctk.CTkButton(row, text="Abrir el mapa", height=38, corner_radius=10, font=font(13, "bold"),
+                      fg_color=C["accent"], hover_color=C["accent_h"], text_color="#0B0F0C",
+                      command=self.open_map).grid(row=0, column=1, sticky="ew", padx=(5, 0))
+        self.install_btn = ghost_button(self, "Instalar el mod en la partida", self.install)
+        self.install_btn.pack(fill="x", padx=20, pady=(10, 0))
+        ctk.CTkLabel(self, text="Los ajustes y el mod viajan con la partida: tus amigos no configuran nada.",
+                     font=font(11), text_color=C["muted"], wraplength=400).pack(padx=20, pady=(10, 0))
+        self.refresh()
+
+    def field(self, parent, label, placeholder, value):
+        ctk.CTkLabel(parent, text=label, font=font(12, "bold"),
+                     text_color=C["muted"]).pack(anchor="w", padx=14, pady=(10, 4))
+        e = ctk.CTkEntry(parent, height=34, corner_radius=8, font=font(12),
+                         placeholder_text=placeholder, border_color=C["border"])
+        e.pack(fill="x", padx=14)
+        if value:
+            e.insert(0, value)
+        return e
+
+    def refresh(self):
+        if not self.winfo_exists():
+            return
+        relay = self.main.app.relay
+        ok = relay.last_ok and time.time() - relay.last_ok < 20
+        self.status.configure(text=("● " if ok else "○ ") + relay.status.capitalize(),
+                              text_color=C["accent"] if ok else C["text"])
+        if livemap_installed(self.repo.folder):
+            self.mod_lbl.configure(text="✓ Mod PZLiveMap instalado en la partida", text_color=C["accent"])
+            self.install_btn.configure(text="Reinstalar / actualizar el mod")
+        else:
+            self.mod_lbl.configure(text="⚠ Falta instalar el mod en la partida", text_color=C["warn"])
+        self.after(2000, self.refresh)
+
+    def save(self, quiet=False):
+        url = self.url.get().strip()
+        if url and not url.startswith(("http://", "https://")):
+            return messagebox.showwarning(APP_NAME, "La dirección debe empezar por https://", parent=self)
+        if url and not url.endswith("/"):
+            url += "/"
+        self.repo.set_group(livemap={"url": url, "token": self.token.get().strip(),
+                                     "view": self.view.get().strip()})
+        if not quiet:
+            messagebox.showinfo(APP_NAME, "Guardado. Se comparte con tus amigos al subir la partida.", parent=self)
+
+    def open_map(self):
+        url = self.url.get().strip()
+        if not url:
+            return messagebox.showinfo(APP_NAME, "Primero pon la dirección del mapa.", parent=self)
+        view = self.view.get().strip()
+        webbrowser.open(url + (("&" if "?" in url else "?") + "k=" + urllib.parse.quote(view) if view else ""))
+
+    def install(self):
+        if game_running():
+            return messagebox.showinfo(APP_NAME, "Cierra el juego primero.", parent=self)
+        try:
+            self.save(quiet=True)
+            n = install_livemap(self.repo.folder)
+        except Exception as e:  # noqa: BLE001
+            return self.main.app.error(e)
+        messagebox.showinfo(APP_NAME, "Listo: el mod quedó en la partida" + (" y activado en el servidor"
+                            if n else "") + ".\n\nDale «⤒ Subir partida» para que les llegue a tus amigos.",
+                            parent=self)
+        self.main.render_mods()
 
 
 def session_row(parent, ses, wrap=360):
