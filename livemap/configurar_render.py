@@ -27,9 +27,10 @@ block("output_root", out.replace("\\", "/"))
 setting("top_view_square_size", sqr)
 setting("top_view_color_mode", "carto-zed")
 if omit is not None:
-    # Isométrica ligera: solo el piso de la calle (sin techos ni pisos altos), en jpg y sin los niveles más finos.
+    # Isométrica ligera: solo el piso de la calle (sin techos ni pisos altos), en webp y sin los niveles más finos.
     setting("layer_range", "[0, 1]")
-    setting("image_fmt_base_layer0", "jpg")
+    setting("image_fmt_base_layer0", "webp")   # ~40% menos que jpg con la misma pinta
+    setting("image_save_options", "{webp: {quality: 80, method: 4}, jpg: {quality: 85}}")
     setting("omit_levels", omit)
 conf.write_text(text, encoding="utf-8")
 print(f"OK: juego en {pz_root}, salida en {out}, vista superior {sqr} px por cuadro"
