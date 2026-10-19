@@ -1,5 +1,5 @@
--- PZ Live Map (cliente): cada jugador escribe su propia posición. Sirve de respaldo si el
--- archivo del servidor no está disponible, y para que un amigo también pueda enviar al mapa.
+-- PZ Live Map (cliente): cada jugador escribe su propia posición (respaldo si el archivo del
+-- servidor no está, y para las fotos de PZ Share) y muestra los pings que reparte el servidor.
 if not isClient() then return end
 require "PZLiveMap_Shared"
 
@@ -12,4 +12,9 @@ local function tick()
     pcall(PZLiveMap.write, "pzlivemap_client.json", "client", list)
 end
 
+local function onServerCommand(module, command, args)
+    if module == "PZLiveMap" and command == "ping" then pcall(PZLiveMap.showPing, args) end
+end
+
 Events.EveryOneMinute.Add(tick)
+Events.OnServerCommand.Add(onServerCommand)

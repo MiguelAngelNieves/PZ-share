@@ -585,23 +585,34 @@ def install_livemap(folder: Path):
 
 
 LOCAL_MAP_PORT = 8765
+STEAM_SHOTS = ("760", "remote", STEAM_APP_ID, "screenshots")  # capturas de Steam (F12) de PZ
+
+
+def pzcore():
+    """El núcleo del mapa (livemap/pzcore.py): el mismo que usa el servidor de la Pi."""
+    folder = str(resource("livemap"))
+    if folder not in sys.path:
+        sys.path.insert(0, folder)
+    import pzcore as mod  # noqa: PLC0415
+    return mod
 
 
 class LocalMap:
     """Mapa en vivo dentro de PZ Share: un servidor web mínimo en este PC (sin Pi, sin Docker).
-    Solo corre si lo activas y casi no gasta nada: un hilo dormido y el estado en memoria."""
-    ONLINE_SECS, TRAIL_MAX, TRAIL_STEP = 25, 600, 4.0
+    Solo corre si lo activas y casi no gasta nada: un hilo dormido y el estado en memoria.
+    Tiene lo mismo que la Pi: niebla, marcas, pings, tareas, fotos, logros y timelapse."""
 
     def __init__(self):
-        self.state = {"world": {}, "players": {}, "events": [], "updated": 0}
+        self.core = None
         self.cond = threading.Condition()
         self.version = 0
+        self.payload = "{}"
         self.httpd = None
-        self.tiles_dir = None  # carpeta base_top renderizada con pzmap2dzi (opcional)
+        self.tiles_dir = None  # carpeta renderizada con pzmap2dzi (opcional)
 
     @staticmethod
     def find_dzi(folder):
-        """Acepta la carpeta de salida de pzmap2dzi, su html/, map_data/ o base_top/ directamente."""
+        """Acepta la carpeta de salida de pzmap2dzi, su html/, map_data/ o base/base_top directamente."""
         if not folder:
             return None
         base = Path(folder)
@@ -619,125 +630,188 @@ class LocalMap:
     def url(self):
         return f"http://127.0.0.1:{LOCAL_MAP_PORT}/"
 
-    # — estado (misma lógica que el servidor de la Pi) —
-    def event(self, text, kind="info"):
-        self.state["events"].insert(0, {"t": time.time(), "text": text, "kind": kind})
-        del self.state["events"][60:]
+    def ensure_core(self):
+        if self.core is None:
+            mod = pzcore()
+            try:
+                towns = json.loads(resource("livemap", "static", "towns.json").read_text(encoding="utf-8"))
+            except Exception:  # noqa: BLE001
+                towns = []
+            self.core = mod.Core(CONFIG_DIR / "localmap", towns, title="Mapa en vivo · este PC")
+            self.core.on_change = lambda _kind: self.bump()
+        return self.core
 
     def update(self, body):
-        now = time.time()
-        st = self.state
-        w = body.get("world") or {}
-        st["world"] = {"day": w.get("day"), "hour": w.get("hour"), "minute": w.get("minute"),
-                       "host": body.get("host", "")}
-        for raw in (body.get("players") or [])[:32]:
-            name = str(raw.get("name", "")).strip()[:40]
-            if not name:
-                continue
-            pl = st["players"].get(name)
-            if pl is None or now - pl.get("seen", 0) > self.ONLINE_SECS:
-                self.event(f"{name} se conectó", "join")
-            pl = st["players"].setdefault(name, {"trail": []})
-            if raw.get("dead") and not pl.get("dead"):
-                self.event(f"💀 {name} murió", "death")
-            if raw.get("vehicle") and not pl.get("vehicle"):
-                self.event(f"🚗 {name} se subió a un vehículo")
-            x, y = float(raw.get("x") or 0), float(raw.get("y") or 0)
-            tr = pl["trail"]
-            if not tr or abs(tr[-1][0] - x) + abs(tr[-1][1] - y) >= self.TRAIL_STEP:
-                tr.append([round(x, 1), round(y, 1), int(now)])
-                del tr[:-self.TRAIL_MAX]
-            pl.update(x=x, y=y, z=int(raw.get("z") or 0), hp=float(raw.get("hp") or 100),
-                      dead=bool(raw.get("dead")), vehicle=raw.get("vehicle"), seen=now)
-        st["updated"] = now
-        self.bump()
+        self.ensure_core().update(body)
 
     def bump(self):
         with self.cond:
+            self.payload = json.dumps(self.core.public_state(take_cells=True), ensure_ascii=False)
             self.version += 1
             self.cond.notify_all()
 
-    def public(self):
-        now = time.time()
-        players = [{**{k: v for k, v in p.items()}, "name": n, "online": now - p.get("seen", 0) < self.ONLINE_SECS}
-                   for n, p in self.state["players"].items()]
-        players.sort(key=lambda p: (not p["online"], p["name"].lower()))
-        return {"world": self.state["world"], "players": players, "events": self.state["events"][:30],
-                "updated": self.state["updated"], "now": now}
+    def ticker(self):
+        n = 0
+        while self.httpd:
+            time.sleep(5)
+            n += 1
+            try:
+                self.core.tick()
+                if n % 36 == 0:
+                    self.core.save()
+            except Exception:  # noqa: BLE001
+                pass
 
     # — servidor —
     def start(self):
         if self.httpd:
             return
         local = self
+        core = self.ensure_core()
         static = resource("livemap", "static")
+        ctypes = {".jpg": "image/jpeg", ".png": "image/png", ".webp": "image/webp",
+                  ".json": "application/json", ".dzi": "application/xml"}
 
         class Handler(BaseHTTPRequestHandler):
             def log_message(self, *a):  # silencio
                 pass
 
             def send(self, code, body, ctype="application/json; charset=utf-8"):
-                data = body if isinstance(body, bytes) else body.encode("utf-8")
+                data = body if isinstance(body, bytes) else (body if isinstance(body, str) else
+                                                             json.dumps(body, ensure_ascii=False)).encode("utf-8")
                 self.send_response(code)
                 self.send_header("Content-Type", ctype)
                 self.send_header("Content-Length", str(len(data)))
+                self.send_header("Cache-Control", "no-cache")
                 self.end_headers()
                 self.wfile.write(data)
 
+            def body(self):
+                n = int(self.headers.get("Content-Length") or 0)
+                if n > 20000:
+                    raise ValueError("Demasiado grande")
+                data = json.loads(self.rfile.read(n) or b"{}")
+                if not isinstance(data, dict):
+                    raise ValueError("JSON inválido")
+                return data
+
+            def act(self, fn, *a):
+                try:
+                    return self.send(200, fn(*a) or {"ok": True})
+                except KeyError:
+                    return self.send(404, {"detail": "No existe"})
+                except ValueError as e:
+                    return self.send(400, {"detail": str(e)})
+
+            def route(self):
+                return urllib.parse.urlparse(self.path).path.rstrip("/") or "/"
+
             def do_GET(self):
-                path = urllib.parse.urlparse(self.path).path
+                path = self.route()
                 if path in ("/", "/index.html"):
                     return self.send(200, (static / "index.html").read_bytes(), "text/html; charset=utf-8")
                 if path == "/towns.json":
                     return self.send(200, (static / "towns.json").read_bytes())
                 if path == "/config.json":
-                    return self.send(200, json.dumps({"dzi": "tiles/" if local.tiles_dir else "", "tiles": "",
-                                                      "image": False, "image_bounds": None,
-                                                      "title": "Mapa en vivo · este PC", "need_key": False}))
+                    return self.send(200, {"dzi": "tiles/" if local.tiles_dir else "", "tiles": "", "image": False,
+                                           "image_bounds": None, "title": "Mapa en vivo · este PC",
+                                           "need_key": False, "features": True})
                 if path.startswith("/tiles/") and local.tiles_dir:
-                    rel = urllib.parse.unquote(path[len("/tiles/"):])
-                    f = (local.tiles_dir / rel).resolve()
+                    f = (local.tiles_dir / urllib.parse.unquote(path[len("/tiles/"):])).resolve()
                     if local.tiles_dir.resolve() in f.parents and f.is_file():
-                        ctype = {".jpg": "image/jpeg", ".png": "image/png", ".webp": "image/webp",
-                                 ".json": "application/json", ".dzi": "application/xml"}.get(f.suffix, "application/octet-stream")
-                        return self.send(200, f.read_bytes(), ctype)
+                        return self.send(200, f.read_bytes(), ctypes.get(f.suffix, "application/octet-stream"))
                     return self.send(404, "{}")
-                if path == "/api/state":
-                    return self.send(200, json.dumps(local.public(), ensure_ascii=False))
+                if path.startswith("/photos/"):
+                    f = core.photo_path(urllib.parse.unquote(path[len("/photos/"):]))
+                    return self.send(200, f.read_bytes(), ctypes.get(f.suffix, "image/jpeg")) if f else self.send(404, "{}")
+                simple = {"/api/state": core.public_state, "/api/explored": core.explored_list,
+                          "/api/history": core.history, "/api/achievements": core.achievements,
+                          "/api/photos": lambda: core.state["photos"]}
+                if path in simple:
+                    return self.send(200, simple[path]())
                 if path == "/api/stream":
-                    self.send_response(200)
-                    self.send_header("Content-Type", "text/event-stream")
-                    self.send_header("Cache-Control", "no-cache")
-                    self.end_headers()
-                    seen = -1
-                    try:
-                        while local.httpd:
-                            with local.cond:
-                                if local.version == seen:
-                                    local.cond.wait(timeout=15)
-                                changed = local.version != seen
-                                seen = local.version
-                            msg = f"data: {json.dumps(local.public(), ensure_ascii=False)}\n\n" if changed else ": ping\n\n"
-                            self.wfile.write(msg.encode("utf-8"))
-                            self.wfile.flush()
-                    except (BrokenPipeError, ConnectionResetError, OSError):
-                        pass
-                    return
+                    return self.stream()
                 self.send(404, "{}")
+
+            def stream(self):
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Cache-Control", "no-cache")
+                self.end_headers()
+                seen = local.version
+                try:
+                    self.wfile.write(f"data: {json.dumps(core.public_state(), ensure_ascii=False)}\n\n".encode())
+                    self.wfile.flush()
+                    while local.httpd:
+                        with local.cond:
+                            if local.version == seen:
+                                local.cond.wait(timeout=15)
+                            changed, seen, payload = local.version != seen, local.version, local.payload
+                        self.wfile.write((f"data: {payload}\n\n" if changed else ": ping\n\n").encode("utf-8"))
+                        self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError, OSError):
+                    pass
+
+            def do_POST(self):
+                path = self.route()
+                try:
+                    data = self.body()
+                except ValueError as e:
+                    return self.send(400, {"detail": str(e)})
+                fns = {"/api/marks": core.add_mark, "/api/ping": core.add_ping, "/api/tasks": core.add_task}
+                if path in fns:
+                    return self.act(fns[path], data)
+                self.send(404, "{}")
+
+            def do_PATCH(self):
+                path = self.route()
+                try:
+                    data = self.body()
+                except ValueError as e:
+                    return self.send(400, {"detail": str(e)})
+                m = re.fullmatch(r"/api/(marks|tasks)/([0-9a-f]+)", path)
+                if not m:
+                    return self.send(404, "{}")
+                return self.act(core.edit_mark if m[1] == "marks" else core.set_task, m[2], data)
+
+            def do_DELETE(self):
+                m = re.fullmatch(r"/api/(marks|tasks)/([0-9a-f]+)", self.route())
+                if not m:
+                    return self.send(404, "{}")
+                return self.act(core.del_mark if m[1] == "marks" else core.del_task, m[2])
 
         self.httpd = ThreadingHTTPServer(("127.0.0.1", LOCAL_MAP_PORT), Handler)
         self.httpd.daemon_threads = True
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+        threading.Thread(target=self.ticker, daemon=True).start()
 
     def stop(self):
         if self.httpd:
             h, self.httpd = self.httpd, None
-            self.bump()
+            try:
+                self.core.save(force=True)
+            except Exception:  # noqa: BLE001
+                pass
+            with self.cond:
+                self.version += 1
+                self.cond.notify_all()
             threading.Thread(target=h.shutdown, daemon=True).start()
 
 
+def read_live(folder: Path, name, max_age=60):
+    """Lee uno de los .json que escribe el mod (o None si es viejo o está a medio escribir)."""
+    f = Path(folder) / "Lua" / name
+    try:
+        if time.time() - f.stat().st_mtime > max_age:
+            return None
+        return json.loads(f.read_text(encoding="utf-8", errors="replace"))
+    except (OSError, ValueError):
+        return None
+
+
 class LiveRelay(threading.Thread):
-    """Mientras el juego está abierto, manda al mapa en vivo lo que escribe el mod."""
+    """Mientras el juego está abierto: manda al mapa en vivo lo que escribe el mod, trae los pings del
+    mapa hacia el juego (Zomboid/Lua/pzlivemap_in.txt) y sube las capturas de Steam (F12) al álbum."""
 
     def __init__(self, app):
         super().__init__(daemon=True)
@@ -746,6 +820,9 @@ class LiveRelay(threading.Thread):
         self.sent = 0
         self.last_ok = 0
         self.last_mtime = 0
+        self.inbox_last = None
+        self.shots_seen = None   # capturas que ya estaban: no se suben
+        self.photos_sent = 0
 
     def config(self):
         try:
@@ -768,6 +845,12 @@ class LiveRelay(threading.Thread):
                     break
         return best
 
+    def request(self, cfg, path, data=None, ctype="application/json", timeout=8):
+        req = urllib.request.Request(cfg["url"].rstrip("/") + path, data=data,
+                                     headers={"Authorization": f"Bearer {cfg['token']}", "Content-Type": ctype,
+                                              "User-Agent": "PZShare"})
+        return urllib.request.urlopen(req, timeout=timeout).read()
+
     def run(self):
         while True:
             time.sleep(3)
@@ -779,7 +862,10 @@ class LiveRelay(threading.Thread):
                 continue
             if not game_running():
                 self.status = "esperando a que abras el juego"
+                self.shots_seen = None
                 continue
+            self.sync_inbox(repo, cfg, local, to_pi)
+            self.sync_photos(repo, cfg, local, to_pi)
             found = self.pick_file(repo.folder)
             if not found:
                 self.status = "juego abierto, esperando datos del mod"
@@ -801,11 +887,7 @@ class LiveRelay(threading.Thread):
             if not to_pi:
                 continue
             try:
-                req = urllib.request.Request(
-                    cfg["url"].rstrip("/") + "/api/update", data=json.dumps(data).encode("utf-8"),
-                    headers={"Authorization": f"Bearer {cfg['token']}", "Content-Type": "application/json",
-                             "User-Agent": "PZShare"})
-                urllib.request.urlopen(req, timeout=8).read()
+                self.request(cfg, "/api/update", json.dumps(data).encode("utf-8"))
                 self.sent += 1
                 self.last_ok = time.time()
                 self.status = f"en vivo{' (PC y Pi)' if local.running else ''} · {n} jugadores"
@@ -813,6 +895,85 @@ class LiveRelay(threading.Thread):
                 self.status = "token inválido" if e.code == 401 else f"error {e.code} del mapa"
             except Exception as e:  # noqa: BLE001
                 self.status = f"sin conexión con la Pi ({type(e).__name__})"
+
+    # — pings del mapa → juego —
+    def sync_inbox(self, repo, cfg, local, to_pi):
+        lines = ""
+        if local.running and local.core:
+            lines += local.core.inbox_lines()
+        if to_pi:
+            try:
+                lines += self.request(cfg, "/api/inbox", timeout=5).decode("utf-8", "replace")
+            except Exception:  # noqa: BLE001
+                pass
+        if lines == self.inbox_last:
+            return
+        try:
+            folder = Path(repo.folder) / "Lua"
+            folder.mkdir(parents=True, exist_ok=True)
+            (folder / "pzlivemap_in.txt").write_text(lines, encoding="utf-8")
+            self.inbox_last = lines
+        except OSError:
+            pass
+
+    # — capturas de Steam (F12) → álbum —
+    def shot_files(self):
+        exe = steam_exe()
+        if not exe:
+            return []
+        files = []
+        for d in (Path(exe).parent / "userdata").glob("*"):
+            folder = d.joinpath(*STEAM_SHOTS)
+            if folder.is_dir():
+                files += [f for f in folder.glob("*.jpg")]
+        return files
+
+    def sync_photos(self, repo, cfg, local, to_pi):
+        try:
+            files = {str(f): f for f in self.shot_files()}
+        except OSError:
+            return
+        if self.shots_seen is None:      # al abrir el juego: lo que ya había no se sube
+            self.shots_seen = set(files)
+            return
+        for key, f in files.items():
+            if key in self.shots_seen:
+                continue
+            try:
+                if time.time() - f.stat().st_mtime < 2:
+                    continue  # Steam la está guardando todavía
+                self.shots_seen.add(key)
+                self.upload_photo(repo, cfg, local, to_pi, f)
+            except Exception:  # noqa: BLE001
+                pass
+
+    def upload_photo(self, repo, cfg, local, to_pi, f: Path):
+        me = None
+        for name in ("pzlivemap_client.json", "pzlivemap.json"):  # el propio primero
+            data = read_live(repo.folder, name)
+            if data and data.get("players"):
+                players = data["players"]
+                me = next((p for p in players if p.get("name") == repo.player), players[0])
+                day = (data.get("world") or {}).get("day", 0)
+                break
+        if not me:
+            return
+        raw = f.read_bytes()
+        try:
+            from PIL import Image  # noqa: PLC0415
+            img = Image.open(io.BytesIO(raw)).convert("RGB")
+            img.thumbnail((1600, 1600))
+            out = io.BytesIO()
+            img.save(out, "JPEG", quality=82)
+            raw = out.getvalue()
+        except Exception:  # noqa: BLE001
+            pass
+        meta = {"by": me.get("name") or repo.player, "x": me.get("x", 0), "y": me.get("y", 0), "day": day}
+        if local.running and local.core:
+            local.core.add_photo(meta, raw, "jpg")
+        if to_pi:
+            self.request(cfg, "/api/photo?" + urllib.parse.urlencode(meta), raw, "image/jpeg", timeout=30)
+        self.photos_sent += 1
 
 
 # ───────────────────────── UI helpers ─────────────────────────
@@ -898,6 +1059,8 @@ class App(ctk.CTk):
                 APP_NAME, "Estás jugando. Si cierras PZ Share, la partida NO se subirá sola.\n\n¿Cerrar igual?",
                 icon="warning", parent=self):
                 return
+        if self.localmap.running:
+            self.localmap.stop()  # guarda lo explorado, marcas y tareas del modo «en este PC»
         self.destroy()
 
 

@@ -2,116 +2,387 @@
 <html lang="es">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#12150F">
 <title>PZ Live Map</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet">
 <style>
-  :root { --bg:#0f1311; --card:#181e1b; --card2:#202824; --border:#2a332e; --text:#e8edea;
-          --muted:#8a968f; --accent:#5cc26b; --warn:#e3b341; --danger:#e5534b; }
-  * { box-sizing: border-box; }
-  html, body { margin:0; height:100%; background:var(--bg); color:var(--text);
-               font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
-  #map { position:absolute; inset:0; background:#0b0e0c; }
-  .leaflet-container { background:#0b0e0c; font: inherit; }
-  .bar { position:absolute; z-index:1000; top:12px; left:12px; right:12px; display:flex; gap:10px;
-         align-items:center; pointer-events:none; }
-  .pill { pointer-events:auto; background:rgba(24,30,27,.92); border:1px solid var(--border);
-          border-radius:12px; padding:8px 12px; backdrop-filter: blur(6px); }
-  .title { font-weight:700; font-size:15px; }
-  .muted { color:var(--muted); }
-  .live { display:inline-flex; align-items:center; gap:6px; }
-  .dot { width:9px; height:9px; border-radius:50%; background:var(--muted); display:inline-block; }
-  .dot.on { background:var(--accent); box-shadow:0 0 0 0 rgba(92,194,107,.7); animation:pulse 1.6s infinite; }
-  @keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(92,194,107,.6)} 70%{box-shadow:0 0 0 8px rgba(92,194,107,0)} 100%{box-shadow:0 0 0 0 rgba(92,194,107,0)} }
-  .spacer { flex:1; }
-  .panel { position:absolute; z-index:1000; top:64px; right:12px; width:290px; max-height:calc(100% - 140px);
-           overflow:auto; background:rgba(24,30,27,.94); border:1px solid var(--border); border-radius:14px;
-           padding:12px; }
-  .panel h3 { margin:4px 0 8px; font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); }
-  .player { display:grid; grid-template-columns: 30px 1fr auto; gap:8px; align-items:center; padding:8px;
-            border-radius:10px; cursor:pointer; border:1px solid transparent; }
-  .player:hover { background:var(--card2); }
-  .player.following { border-color: var(--accent); background:var(--card2); }
-  .avatar { width:30px; height:30px; border-radius:50%; display:grid; place-items:center; font-weight:700;
-            color:#0b0f0c; }
-  .hp { height:5px; background:var(--card2); border-radius:3px; overflow:hidden; margin-top:4px; }
-  .hp > i { display:block; height:100%; background:var(--accent); }
-  .sub { font-size:12px; color:var(--muted); }
-  .off { opacity:.45; }
-  .events { margin-top:12px; border-top:1px solid var(--border); padding-top:8px; }
-  .ev { font-size:12px; padding:3px 0; color:var(--text); }
-  .ev time { color:var(--muted); margin-right:6px; }
-  .ev.death { color:#ff8a84; } .ev.join { color:#9fe3a8; } .ev.leave { color:var(--muted); }
-  .btn { pointer-events:auto; background:var(--card2); color:var(--text); border:1px solid var(--border);
-         border-radius:10px; padding:7px 10px; cursor:pointer; font: inherit; }
-  .btn.on { border-color:var(--accent); color:var(--accent); }
-  .coords { position:absolute; z-index:1000; left:12px; bottom:12px; font-variant-numeric: tabular-nums; }
-  .marker { position:relative; }
-  .marker .pin { width:30px; height:30px; border-radius:50%; border:3px solid #0b0f0c; display:grid;
-                 place-items:center; font-weight:800; color:#0b0f0c; box-shadow:0 2px 10px rgba(0,0,0,.6); }
-  .marker .label { position:absolute; left:50%; top:34px; transform:translateX(-50%); white-space:nowrap;
-                   background:rgba(11,14,12,.85); padding:2px 7px; border-radius:6px; font-size:12px; font-weight:600; }
-  .marker.off .pin { filter: grayscale(1); opacity:.6; }
-  .town { color:#cfd8d3; font-weight:700; font-size:13px; text-shadow:0 1px 3px #000; white-space:nowrap;
-          letter-spacing:.04em; text-transform:uppercase; transform:translate(-50%,-50%); }
-  .empty { color:var(--muted); font-size:13px; padding:6px; }
-  .gate { position:absolute; inset:0; z-index:2000; display:none; place-items:center; background:var(--bg); }
-  .gate .pill { padding:20px; width:300px; }
-  .gate input { width:100%; padding:9px; border-radius:8px; border:1px solid var(--border); background:var(--card2);
-                color:var(--text); margin:10px 0; }
-  @media (max-width: 640px) {
-    .panel { left:12px; right:12px; width:auto; top:auto; bottom:52px; max-height:38%; }
-    .hide-sm { display:none; }
-    .bar { gap:6px; } .pill, .btn { padding:6px 9px; font-size:12px; } .title { font-size:13px; }
-    .leaflet-bottom.leaflet-right { bottom: 42%; }
-  }
+:root { color-scheme:dark;
+  --bg:#12150F; --surface:#1C2119; --sheet:#1A1F17; --chip:#2A3224; --border:#2E3628; --border2:#3A4431;
+  --text:#ECE9DD; --muted:#A9A894; --dim:#8F8E7C; --accent:#E8A33D; --accent2:#F4C37A; --teal:#6CC4B6;
+  --danger:#E58B7B; --danger-bg:#3A221E; --danger-bd:#5A2F28; --float:rgba(28,33,25,.94);
+  --shadow:0 4px 16px rgba(0,0,0,.35); --display:"Barlow Condensed", "Arial Narrow", sans-serif;
+  --body:"Manrope", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --nav-h:68px; --safe-b: env(safe-area-inset-bottom, 0px);
+}
+* { box-sizing:border-box; }
+html, body { margin:0; height:100%; background:var(--bg); color:var(--text); font:14px/1.4 var(--body); }
+button, input { font:inherit; color:inherit; }
+button { cursor:pointer; }
+a { color:var(--accent); }
+.hidden { display:none !important; }
+.sr { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
+.display { font-family:var(--display); font-weight:700; letter-spacing:.02em; }
+.muted { color:var(--muted); }
+
+/* ── estructura ── */
+#app { position:fixed; inset:0; display:flex; }
+#mapwrap { position:relative; flex:1; min-width:0; }
+#map { position:absolute; inset:0; background:#0b0e0c; }
+.leaflet-container { background:#0b0e0c; font:inherit; }
+#side { display:flex; flex-direction:column; background:var(--bg); }
+#side .scroll { flex:1; overflow:auto; padding:0 16px 24px; }
+.side-head { padding:20px 20px 12px; display:flex; flex-direction:column; gap:2px; }
+.side-head h1 { margin:0; font:700 34px/1 var(--display); letter-spacing:.02em; text-transform:uppercase; }
+.side-head .sub { font-size:13px; color:var(--muted); font-weight:600; }
+
+/* ── barra superior flotante ── */
+.topbar { position:absolute; z-index:1000; top:calc(12px + env(safe-area-inset-top, 0px)); left:12px; right:12px;
+  display:flex; align-items:center; gap:12px; padding:10px 14px 10px 18px; background:var(--float);
+  border:1px solid var(--border); border-radius:22px; box-shadow:var(--shadow); }
+.topbar .when { font:700 24px/1.05 var(--display); letter-spacing:.02em; }
+.topbar .who { font-size:12px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.topbar .grow { flex:1; min-width:0; display:flex; flex-direction:column; }
+.live { display:flex; align-items:center; gap:6px; padding:5px 9px; border-radius:12px; background:#1F3330;
+  color:#9EDDD3; font-size:11px; font-weight:800; white-space:nowrap; }
+.live i { width:7px; height:7px; border-radius:50%; background:var(--teal); }
+.live.off { background:var(--chip); color:var(--muted); } .live.off i { background:var(--dim); }
+
+.chips { position:absolute; z-index:1000; top:calc(86px + env(safe-area-inset-top, 0px)); left:12px; right:68px;
+  display:flex; gap:8px; flex-wrap:wrap; }
+.chipbtn { min-height:40px; padding:0 14px; border-radius:20px; border:1px solid var(--border); background:var(--float);
+  font-size:13px; font-weight:600; box-shadow:var(--shadow); }
+.chipbtn[aria-pressed="true"] { background:var(--accent); color:#12150F; border-color:var(--accent); font-weight:800; }
+
+.tools { position:absolute; z-index:1000; top:calc(86px + env(safe-area-inset-top, 0px)); right:12px; display:flex;
+  flex-direction:column; gap:8px; }
+.round { width:48px; height:48px; border-radius:50%; border:1px solid var(--border); background:var(--float);
+  display:flex; align-items:center; justify-content:center; box-shadow:var(--shadow); }
+.round[aria-pressed="true"] { color:var(--accent); border-color:var(--accent); }
+.round svg, .ico { width:22px; height:22px; fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
+
+.fab { position:absolute; z-index:1000; right:16px; bottom:calc(var(--sheet-h, 220px) + 16px);
+  height:56px; padding:0 22px 0 18px; border-radius:18px; border:0; background:var(--accent); color:#12150F;
+  display:flex; align-items:center; gap:8px; font:700 21px var(--display); letter-spacing:.04em;
+  box-shadow:0 6px 18px rgba(0,0,0,.45); }
+.fab.armed { background:#ECE9DD; }
+.banner { position:absolute; z-index:1001; left:50%; transform:translateX(-50%); top:calc(140px + env(safe-area-inset-top, 0px));
+  padding:10px 12px 10px 16px; border-radius:16px; background:var(--accent); color:#12150F; font-weight:800;
+  display:flex; gap:12px; align-items:center; box-shadow:var(--shadow); white-space:nowrap; }
+.banner button { border:0; background:#12150F; color:var(--text); border-radius:10px; min-height:36px; padding:0 12px; font-weight:700; }
+
+/* ── hoja inferior (celular, vista Mapa) ── */
+.sheet { position:absolute; z-index:1000; left:0; right:0; bottom:0; background:var(--sheet);
+  border-top:1px solid var(--border); border-radius:22px 22px 0 0; box-shadow:0 -6px 24px rgba(0,0,0,.4);
+  padding:10px 0 calc(var(--nav-h) + var(--safe-b)); }
+.sheet .handle { width:40px; height:4px; border-radius:2px; background:var(--border2); margin:0 auto 12px; }
+.mini { display:grid; grid-auto-flow:column; grid-auto-columns:calc(50% - 21px); gap:10px; padding:0 16px 14px;
+  overflow-x:auto; scrollbar-width:none; }
+.mini .card { padding:12px; border-radius:16px; background:#232A1F; display:flex; flex-direction:column; gap:8px;
+  border:1px solid transparent; text-align:left; }
+.mini .card.hurt { background:#2C201C; }
+.mini .card.sel { border-color:var(--accent); }
+.mini .card.off { opacity:.55; }
+.mini .nm { display:flex; align-items:center; gap:8px; font-size:14px; font-weight:700; }
+.mini .nm i { width:10px; height:10px; border-radius:50%; flex:none; }
+.mini .big { font:700 32px/1 var(--display); }
+.mini .big small { font:600 12px var(--body); color:var(--muted); }
+.mini .st { font-size:12px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.empty { color:var(--muted); font-size:13px; padding:8px 4px; }
+
+/* ── menú inferior ── */
+nav.tabs { position:fixed; z-index:1100; left:0; right:0; bottom:0; display:grid; grid-template-columns:repeat(5, minmax(0,1fr));
+  background:var(--sheet); border-top:1px solid var(--border); padding:6px 4px calc(10px + var(--safe-b)); }
+nav.tabs button { border:0; background:none; display:flex; flex-direction:column; align-items:center; gap:4px;
+  min-height:48px; font-size:11px; font-weight:600; color:var(--muted); }
+nav.tabs button[aria-current="page"] { color:var(--accent); font-weight:800; }
+
+/* ── tarjetas ── */
+.card2 { background:var(--surface); border:1px solid var(--border); border-radius:18px; padding:16px;
+  display:flex; flex-direction:column; gap:12px; margin-bottom:12px; }
+.card2.hurt { border-color:var(--danger-bd); }
+.card2.off { opacity:.6; }
+.prow { display:flex; align-items:center; gap:12px; }
+.avatar { width:44px; height:44px; border-radius:50%; color:#12150F; display:flex; align-items:center; justify-content:center;
+  font:700 20px var(--display); flex:none; }
+.prow .nm { flex:1; min-width:0; display:flex; flex-direction:column; }
+.prow .nm b { font-size:16px; font-weight:800; }
+.prow .nm span { font-size:12px; color:var(--muted); }
+.hpnum { display:flex; flex-direction:column; align-items:flex-end; }
+.hpnum b { font:700 32px/1 var(--display); }
+.hpnum span { font-size:11px; color:var(--muted); }
+.bar { height:8px; background:var(--border); border-radius:4px; overflow:hidden; }
+.bar > i { display:block; height:100%; border-radius:4px; }
+.tags { display:flex; flex-wrap:wrap; gap:6px; font-size:12px; font-weight:600; }
+.tag { padding:5px 10px; border-radius:12px; background:var(--chip); }
+.tag.bad { background:var(--danger-bg); color:#F2C2B8; }
+.tag.soft { color:#C9C7B5; }
+h2.sec { margin:4px 0 10px; font:700 22px var(--display); letter-spacing:.03em; text-transform:uppercase; }
+
+/* tareas */
+.task { display:flex; align-items:center; gap:12px; min-height:48px; border-top:1px solid var(--chip); font-size:14px; }
+.task:first-of-type { border-top:0; }
+.task input[type=checkbox] { width:20px; height:20px; accent-color:var(--accent); flex:none; }
+.task .tx { flex:1; min-width:0; }
+.task.done .tx { color:var(--dim); text-decoration:line-through; }
+.task .by { font-size:11px; color:var(--muted); display:inline-block; width:100%; text-decoration:none; }
+.ini { width:24px; height:24px; border-radius:50%; color:#12150F; font-size:11px; font-weight:800; display:flex;
+  align-items:center; justify-content:center; flex:none; }
+.x { width:36px; height:36px; border-radius:10px; border:0; background:none; color:var(--dim); flex:none; }
+.x:hover { color:var(--danger); background:var(--danger-bg); }
+.addrow { display:flex; gap:8px; padding-top:10px; border-top:1px solid var(--chip); }
+.addrow input { flex:1; min-width:0; min-height:44px; border:1px solid var(--border2); border-radius:12px; padding:0 12px; background:var(--bg); }
+.addrow input::placeholder { color:var(--dim); }
+.addrow button, .btn { display:inline-flex; align-items:center; justify-content:center; gap:6px; min-height:44px; padding:0 14px; border-radius:12px; border:0; background:var(--accent); color:#12150F; font-weight:800; }
+.btn.ghost { background:transparent; color:var(--text); border:1px solid var(--border2); font-weight:700; }
+
+/* álbum */
+.seg { display:flex; border:1px solid var(--border); border-radius:14px; overflow:hidden; font-size:13px; }
+.seg button { min-height:40px; padding:0 12px; border:0; background:transparent; font-weight:600; }
+.seg button[aria-pressed="true"] { background:var(--text); color:#12150F; font-weight:800; }
+.hint { display:flex; align-items:center; gap:10px; padding:10px 12px; border-radius:14px; background:var(--surface);
+  border:1px solid var(--border); font-size:12px; color:#C9C7B5; margin-bottom:14px; }
+.day { font:700 18px var(--display); letter-spacing:.04em; color:var(--muted); margin:6px 0 8px; }
+.photos { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:10px; margin-bottom:12px; }
+.photo { margin:0; border:0; padding:0; background:none; text-align:left; display:flex; flex-direction:column; gap:6px; }
+.photo img { width:100%; aspect-ratio:16/10; object-fit:cover; border-radius:14px; background:var(--chip); display:block; }
+.photo span { font-size:12px; line-height:1.35; }
+.photo span em { font-style:normal; color:var(--muted); }
+
+/* logros */
+.totals { display:grid; grid-template-columns:repeat(4, minmax(0,1fr)); gap:8px; margin-bottom:12px; }
+.totals div { padding:10px 6px; border-radius:14px; background:var(--surface); border:1px solid var(--border); text-align:center; }
+.totals b { display:block; font:700 28px/1 var(--display); }
+.totals span { font-size:11px; color:var(--muted); }
+.rec { display:flex; justify-content:space-between; gap:10px; align-items:center; min-height:42px; border-top:1px solid var(--chip); font-size:13px; }
+.rec:first-of-type { border-top:0; }
+.achs { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:8px; margin-bottom:12px; }
+.ach { padding:12px; border-radius:14px; background:var(--surface); border:1px solid var(--border); display:flex; flex-direction:column; gap:5px; }
+.ach b { font-size:13px; font-weight:800; }
+.ach span { font-size:12px; color:var(--muted); }
+.ach.done { background:#2A2415; border-color:#5C4A22; }
+.ach.done b { color:var(--accent2); } .ach.done span { color:#C9C7B5; }
+.ach .bar { height:5px; }
+.log { font-size:13px; line-height:1.45; padding:4px 0; display:grid; grid-template-columns:78px 1fr; gap:6px; }
+.log time { color:var(--dim); font-variant-numeric:tabular-nums; }
+.leaflet-tooltip, .leaflet-tooltip.tip { background:rgba(18,21,15,.94); color:var(--text); border:1px solid var(--border2); border-radius:10px;
+  font:700 12px var(--body); box-shadow:var(--shadow); padding:4px 8px; }
+.leaflet-tooltip-top:before, .leaflet-tooltip-right:before, .leaflet-tooltip-left:before, .leaflet-tooltip-bottom:before { display:none; }
+.log.k-death { color:#F2C2B8; }
+
+/* marcadores del mapa */
+.pin { width:36px; height:36px; border-radius:50%; border:3px solid #12150F; display:flex; align-items:center; justify-content:center;
+  font:700 18px var(--display); color:#12150F; box-shadow:0 2px 10px rgba(0,0,0,.5); }
+.pin.off { filter:grayscale(1); opacity:.55; }
+.pin.dead { background:#5a5a52 !important; color:var(--text); }
+.pinlabel { position:absolute; left:50%; top:40px; transform:translateX(-50%); white-space:nowrap; background:rgba(18,21,15,.88);
+  padding:2px 8px; border-radius:8px; font-size:12px; font-weight:700; }
+.mark { display:inline-flex; align-items:center; gap:6px; padding:5px 10px 5px 5px; background:rgba(28,33,25,.96);
+  border:1px solid var(--border2); border-radius:16px; font-size:12px; font-weight:700; white-space:nowrap; transform:translate(-14px,-14px); }
+.mark span { width:22px; height:22px; border-radius:50%; display:flex; align-items:center; justify-content:center; background:var(--border); }
+.mark span svg { width:14px; height:14px; fill:none; stroke:var(--text); stroke-width:2.2; stroke-linejoin:round; stroke-linecap:round; }
+.mark.base span { background:var(--text); } .mark.base span svg { stroke:#12150F; }
+.mark.peligro span { background:var(--danger-bg); } .mark.peligro span svg { stroke:var(--danger); }
+.mark.loot span { background:#2A2415; } .mark.loot span svg { stroke:var(--accent); }
+.ping { position:relative; width:0; height:0; }
+.ping .ring { position:absolute; left:-20px; top:-20px; width:40px; height:40px; border-radius:50%; border:2px solid var(--accent);
+  animation:ring 1.6s ease-out infinite; }
+.ping .bubble { position:absolute; left:14px; top:-54px; padding:8px 12px; background:var(--accent); color:#12150F;
+  border-radius:14px 14px 14px 4px; font-size:12px; line-height:1.35; white-space:nowrap; box-shadow:var(--shadow); }
+@keyframes ring { from { transform:scale(.4); opacity:1 } to { transform:scale(1.6); opacity:0 } }
+.town { color:#cfd8d3; font:700 15px var(--display); text-shadow:0 1px 3px #000; white-space:nowrap; letter-spacing:.08em;
+  text-transform:uppercase; transform:translate(-50%,-50%); }
+.photomark img { width:40px; height:40px; object-fit:cover; border-radius:10px; border:2px solid var(--text); box-shadow:var(--shadow); }
+
+/* timelapse */
+.tl { position:absolute; z-index:1001; left:0; right:0; bottom:0; background:var(--sheet); border-top:1px solid var(--border);
+  border-radius:22px 22px 0 0; padding:16px 16px calc(var(--nav-h) + var(--safe-b) + 14px); display:flex; flex-direction:column; gap:14px; }
+.tl .row { display:flex; align-items:center; gap:14px; }
+.tl .play { width:56px; height:56px; border-radius:50%; border:0; background:var(--accent); color:#12150F; display:flex; align-items:center; justify-content:center; flex:none; }
+.tl input[type=range] { width:100%; accent-color:var(--accent); }
+.tl .speeds { display:flex; gap:8px; align-items:center; font-size:12px; color:var(--muted); font-weight:600; }
+.tl .speeds button { min-height:36px; padding:0 12px; border-radius:18px; border:1px solid var(--border2); background:transparent; font-size:13px; font-weight:700; }
+.tl .speeds button[aria-pressed="true"] { background:var(--text); color:#12150F; border-color:var(--text); }
+.tl .cap { padding:10px 12px; border-radius:14px; background:#232A1F; font-size:13px; line-height:1.4; min-height:40px; }
+
+/* modales */
+.modal { position:fixed; inset:0; z-index:3000; background:rgba(0,0,0,.6); display:flex; align-items:flex-end; justify-content:center; }
+.modal .box { width:min(480px, 100%); background:var(--surface); border:1px solid var(--border); border-radius:22px 22px 0 0;
+  padding:20px 20px calc(20px + var(--safe-b)); display:flex; flex-direction:column; gap:12px; }
+.modal h3 { margin:0; font:700 24px var(--display); letter-spacing:.02em; }
+.modal input[type=text] { min-height:44px; border:1px solid var(--border2); border-radius:12px; padding:0 12px; background:var(--bg); }
+.kinds { display:flex; flex-wrap:wrap; gap:8px; }
+.kinds button { display:inline-flex; align-items:center; gap:6px; min-height:40px; padding:0 12px; border-radius:20px; border:1px solid var(--border2); background:transparent; font-weight:700; }
+.kinds button[aria-pressed="true"] { background:var(--accent); color:#12150F; border-color:var(--accent); }
+.modal .acts { display:flex; gap:8px; justify-content:flex-end; flex-wrap:wrap; }
+.lightbox .box { width:min(960px, 100%); border-radius:22px; margin:16px; }
+.lightbox img { width:100%; max-height:70vh; object-fit:contain; border-radius:14px; background:#000; }
+@media (min-width: 900px) { .modal { align-items:center; } .modal .box { border-radius:22px; } }
+
+.leaflet-control-zoom { display:none; }
+
+/* ── celular ── */
+@media (max-width: 899px) {
+  #side { position:fixed; z-index:1050; inset:0; bottom:calc(var(--nav-h) + var(--safe-b)); padding-top:env(safe-area-inset-top, 0px); }
+  body[data-tab="mapa"] #side { display:none; }
+  body:not([data-tab="mapa"]) .onmap { display:none !important; }
+  .desk { display:none !important; }
+}
+/* ── PC ── */
+@media (min-width: 900px) {
+  :root { --nav-h:0px; }
+  #side { width:400px; flex:none; border-right:1px solid var(--border); order:-1; }
+  nav.tabs, .sheet, .mob { display:none !important; }
+  .fab { bottom:20px; right:20px; }
+  .topbar { left:16px; right:auto; width:min(520px, calc(100% - 32px)); }
+  .chips { top:86px; left:16px; }
+  .tl { left:16px; right:auto; width:min(560px, calc(100% - 32px)); bottom:16px; border-radius:22px; border:1px solid var(--border); padding-bottom:16px; }
+  .deskTabs { display:flex; gap:6px; flex-wrap:wrap; padding:0 16px 14px; }
+  .deskTabs button { min-height:36px; padding:0 12px; border-radius:18px; border:1px solid var(--border); background:transparent; font-size:13px; font-weight:600; }
+  .deskTabs button[aria-current="page"] { background:var(--accent); color:#12150F; border-color:var(--accent); font-weight:800; }
+}
+@media (max-width: 899px) { .deskTabs { display:none; } }
 </style>
 </head>
-<body>
-<div id="map"></div>
+<body data-tab="mapa">
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-map" viewBox="0 0 24 24"><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2z"/><path d="M9 4v14M15 6v14"/></symbol>
+  <symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.6 3.4-5.5 6.5-5.5s5.7 1.9 6.5 5.5"/><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8M18 14.8c1.9.7 3.1 2.4 3.5 5.2"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="17" height="17" rx="3"/><path d="m8 12 3 3 5-6"/></symbol>
+  <symbol id="i-image" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><circle cx="9" cy="10" r="1.8"/><path d="m4 18 5-5 4 4 3-3 4 4"/></symbol>
+  <symbol id="i-trophy" viewBox="0 0 24 24"><path d="M8 4h8v5a4 4 0 0 1-8 0V4z"/><path d="M8 6H4.5a3 3 0 0 0 3.5 4M16 6h3.5a3 3 0 0 1-3.5 4M12 13v4M8.5 20h7M10 17h4"/></symbol>
+  <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></symbol>
+  <symbol id="i-locate" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="8"/></symbol>
+  <symbol id="i-route" viewBox="0 0 24 24"><circle cx="6" cy="19" r="2"/><circle cx="18" cy="5" r="2"/><path d="M8 19h7a3.5 3.5 0 0 0 0-7H9a3.5 3.5 0 0 1 0-7h7"/></symbol>
+  <symbol id="i-pin" viewBox="0 0 24 24"><path d="M12 21s-6.5-6-6.5-11a6.5 6.5 0 0 1 13 0c0 5-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="2.3"/></symbol>
+  <symbol id="i-time" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol>
+  <symbol id="i-home" viewBox="0 0 24 24"><path d="M4 11 12 4l8 7v9H4z"/></symbol>
+  <symbol id="i-box" viewBox="0 0 24 24"><path d="M4 8l8-4 8 4v8l-8 4-8-4z"/><path d="M4 8l8 4 8-4M12 12v8"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 4 2.5 20h19z"/><path d="M12 10v4M12 17v.5"/></symbol>
+  <symbol id="i-car" viewBox="0 0 24 24"><path d="M4 16v-4l2-5h12l2 5v4z"/><circle cx="7.5" cy="16.5" r="1.5"/><circle cx="16.5" cy="16.5" r="1.5"/></symbol>
+  <symbol id="i-dot" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/></symbol>
+  <symbol id="i-camera" viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><path d="M8 5h3v14H8zM13 5h3v14h-3z" fill="currentColor" stroke="none"/></symbol>
+</svg>
 
-<div class="bar">
-  <div class="pill"><span class="title" id="title">PZ Live Map</span></div>
-  <div class="pill live"><span class="dot" id="livedot"></span><span id="livetxt">Conectando…</span></div>
-  <div class="pill hide-sm" id="clock"><span class="muted">Sin datos de la partida</span></div>
-  <div class="spacer"></div>
-  <button class="btn on" id="btnTrails" title="Mostrar u ocultar rastros">Rastros</button>
-  <button class="btn" id="btnFit" title="Ver a todos">Ver a todos</button>
-</div>
+<div id="app">
+  <aside id="side" aria-label="Panel">
+    <div class="deskTabs" id="deskTabs" role="tablist" style="padding-top:16px"></div>
+    <section data-panel="grupo" class="hidden" style="display:flex;flex-direction:column;min-height:0;flex:1">
+      <div class="side-head"><div class="sub" id="grupoSub">—</div><h1>Grupo</h1></div>
+      <div class="scroll"><div id="groupList"></div>
+        <h2 class="sec desk" style="margin-top:8px">Actividad</h2><div id="logDesk" class="desk"></div></div>
+    </section>
+    <section data-panel="tareas" class="hidden" style="display:flex;flex-direction:column;min-height:0;flex:1">
+      <div class="side-head"><div class="sub" id="tareasSub">—</div><h1>Tareas</h1></div>
+      <div class="scroll"><div class="card2" style="padding:8px 16px 12px;gap:0">
+        <div id="taskList"></div>
+        <form class="addrow" id="taskForm"><label for="taskInput" class="sr">Nueva tarea</label>
+          <input id="taskInput" type="text" maxlength="120" placeholder="Nueva tarea para el grupo…" autocomplete="off">
+          <button type="submit" aria-label="Añadir tarea"><svg class="ico"><use href="#i-plus"/></svg></button></form>
+      </div></div>
+    </section>
+    <section data-panel="album" class="hidden" style="display:flex;flex-direction:column;min-height:0;flex:1">
+      <div class="side-head" style="flex-direction:row;justify-content:space-between;align-items:flex-end">
+        <div><div class="sub" id="albumSub">—</div><h1>Álbum</h1></div>
+        <div class="seg"><button type="button" id="albFotos" aria-pressed="true">Fotos</button><button type="button" id="albMapa" aria-pressed="false">En el mapa</button></div>
+      </div>
+      <div class="scroll"><div class="hint"><svg class="ico" style="color:var(--accent);flex:none"><use href="#i-camera"/></svg>
+        <span>Saca captura con <b style="color:var(--text)">F12</b> en el juego y aparece aquí, clavada donde estabas.</span></div>
+        <div id="photoList"></div></div>
+    </section>
+    <section data-panel="logros" class="hidden" style="display:flex;flex-direction:column;min-height:0;flex:1">
+      <div class="side-head" style="flex-direction:row;justify-content:space-between;align-items:flex-end">
+        <div><div class="sub">La campaña hasta ahora</div><h1>Logros</h1></div>
+        <button class="btn ghost" type="button" id="openTl"><svg class="ico" style="vertical-align:-5px"><use href="#i-time"/></svg> Timelapse</button>
+      </div>
+      <div class="scroll" id="logros"><div class="empty">Cargando…</div></div>
+    </section>
+  </aside>
 
-<div class="panel">
-  <h3>Jugadores</h3>
-  <div id="players"><div class="empty">Esperando a que alguien juegue…</div></div>
-  <div class="events">
-    <h3>Actividad</h3>
-    <div id="events"><div class="empty">Sin actividad todavía.</div></div>
+  <div id="mapwrap">
+    <div id="map"></div>
+    <div class="topbar onmap">
+      <div class="grow"><div class="when" id="when">PZ LIVE MAP</div><div class="who" id="who">Conectando…</div></div>
+      <span class="live off" id="live"><i></i><span id="liveTxt">CONECTANDO</span></span>
+    </div>
+    <div class="chips onmap" id="fogChips">
+      <button type="button" class="chipbtn" id="fogOn" aria-pressed="true">Explorado</button>
+      <button type="button" class="chipbtn" id="fogOff" aria-pressed="false">Mapa completo</button>
+    </div>
+    <div class="tools onmap">
+      <button type="button" class="round" id="btnFollow" aria-label="Seguir a mi personaje" aria-pressed="false"><svg><use href="#i-locate"/></svg></button>
+      <button type="button" class="round" id="btnTrails" aria-label="Mostrar recorridos de todos" aria-pressed="false"><svg><use href="#i-route"/></svg></button>
+      <button type="button" class="round" id="btnMark" aria-label="Añadir una marca" aria-pressed="false"><svg><use href="#i-pin"/></svg></button>
+      <button type="button" class="round" id="btnTl" aria-label="Timelapse de la campaña" aria-pressed="false"><svg><use href="#i-time"/></svg></button>
+    </div>
+    <div class="banner hidden" id="banner"><span id="bannerTxt">Toca el mapa</span><button type="button" id="bannerCancel">Cancelar</button></div>
+    <button type="button" class="fab onmap" id="fab"><svg class="ico"><use href="#i-target"/></svg>PING</button>
+    <div class="sheet onmap mob" id="sheet"><div class="handle"></div><div class="mini" id="mini"></div></div>
+
+    <div class="tl hidden" id="tl">
+      <div style="display:flex;justify-content:space-between;align-items:flex-end">
+        <div><div class="muted" style="font-size:12px;font-weight:600">Timelapse de la campaña</div>
+          <div class="display" style="font-size:30px;line-height:1" id="tlDay">DÍA —</div></div>
+        <button class="btn ghost" type="button" id="tlClose">Cerrar</button>
+      </div>
+      <div class="row">
+        <button type="button" class="play" id="tlPlay" aria-label="Reproducir"><svg class="ico" style="width:24px;height:24px"><use href="#i-play"/></svg></button>
+        <div style="flex:1"><label for="tlRange" class="sr">Momento de la campaña</label><input id="tlRange" type="range" min="0" max="0" value="0"></div>
+      </div>
+      <div class="speeds">Velocidad
+        <button type="button" data-speed="1" aria-pressed="false">x1</button>
+        <button type="button" data-speed="8" aria-pressed="true">x8</button>
+        <button type="button" data-speed="32" aria-pressed="false">x32</button></div>
+      <div class="cap" id="tlCap">—</div>
+    </div>
   </div>
 </div>
 
-<div class="pill coords muted" id="coords">x —, y —</div>
-
-<div class="gate" id="gate">
-  <div class="pill">
-    <div class="title">Llave de acceso</div>
-    <div class="muted">Pídela al que montó el mapa.</div>
-    <input id="keyInput" placeholder="Llave" autocomplete="off">
-    <button class="btn on" id="keyBtn">Entrar</button>
-  </div>
-</div>
+<nav class="tabs" id="tabs" aria-label="Secciones"></nav>
+<div id="modal"></div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-// Base relativa: funciona en / o detrás de un subpath (p. ej. Tailscale /pzmap/)
-const BASE = location.pathname.endsWith("/") ? location.pathname : location.pathname + "/";
+"use strict";
+// ───────────────────────── base ─────────────────────────
+const BASE = location.pathname.endsWith("/") ? location.pathname : location.pathname.replace(/[^/]*$/, "");
 const params = new URLSearchParams(location.search);
-let KEY = params.get("k") || localStorage.getItem("pzmap_key") || "";
-const api = (p) => BASE + p + (KEY ? (p.includes("?") ? "&" : "?") + "k=" + encodeURIComponent(KEY) : "");
+const store = { get(k, d = "") { try { return localStorage.getItem(k) ?? d; } catch (e) { return d; } },
+                set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} } };
+let KEY = params.get("k") || store.get("pzmap_key");
+const q = (p) => BASE + p + (KEY ? (p.includes("?") ? "&" : "?") + "k=" + encodeURIComponent(KEY) : "");
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const send = (method, p, body) => fetch(q(p), { method, headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined })
+  .then(async (r) => { if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.status); return r.json(); });
+const ago = (t, now = Date.now() / 1000) => { const s = Math.max(0, Math.round(now - t));
+  return s < 60 ? `hace ${s} s` : s < 3600 ? `hace ${Math.round(s / 60)} min` : s < 86400 ? `hace ${Math.round(s / 3600)} h` : `hace ${Math.round(s / 86400)} d`; };
+const hhmm = (h, m) => `${String(h ?? 0).padStart(2, "0")}:${String(m ?? 0).padStart(2, "0")}`;
+const icon = (n) => `<svg class="ico"><use href="#i-${n}"/></svg>`;
 
+let ME = store.get("pzmap_me");
+let S = { players: [], events: [], marks: [], tasks: [], pings: [], world: {}, now: Date.now() / 1000 };
+let FEATURES = true;
+
+// colores: tú en ámbar, el resto con una paleta fija según el nombre
+const PALETTE = ["#6CC4B6", "#9DB4F0", "#E9A0D2", "#C3E05A", "#B9A2F2", "#7FD1E8", "#F2E28C"];
+const KNOWN = new Set();   // todos los nombres vistos: el orden alfabético decide el color (estable)
+const colorOf = (n) => {
+  n = String(n || ""); if (ME && n.toLowerCase() === ME.toLowerCase()) return "#E8A33D";
+  if (n) KNOWN.add(n);
+  const others = [...KNOWN].filter((x) => !ME || x.toLowerCase() !== ME.toLowerCase()).sort((a, b) => a.localeCompare(b));
+  return PALETTE[Math.max(0, others.indexOf(n)) % PALETTE.length];
+};
+const meP = () => S.players.find((p) => ME && p.name.toLowerCase() === ME.toLowerCase());
+
+// ───────────────────────── mapa ─────────────────────────
 const WORLD = { w: 20000, h: 16000 };
-// Coordenadas del juego (x, y en cuadros) -> mapa. Con el mapa renderizado (DZI) la unidad es el
-// píxel de la imagen: px = x0 + x * sqr (datos de map_info.json de pzmap2dzi).
-// Vista isométrica (como projectzomboidmap.com): px = x0 + (x-y)*sqr/2, py = y0 + (x+y)*sqr/4.
-// "skip" = niveles omitidos al renderizar: la imagen es 2^skip veces más pequeña.
 const P = { x0: 0, y0: 0, sqr: 1, iso: false, scale: 1 };
 const ll = (x, y) => P.iso
   ? L.latLng(-(P.y0 + (x + y) * P.sqr / 4) / P.scale, (P.x0 + (x - y) * P.sqr / 2) / P.scale)
@@ -119,18 +390,14 @@ const ll = (x, y) => P.iso
 const unll = (latlng) => {
   const px = latlng.lng * P.scale - P.x0, py = -latlng.lat * P.scale - P.y0;
   if (!P.iso) return [px / P.sqr, py / P.sqr];
-  const a = px / (P.sqr / 2), b = py / (P.sqr / 4);   // a = x - y, b = x + y
+  const a = px / (P.sqr / 2), b = py / (P.sqr / 4);
   return [(a + b) / 2, (b - a) / 2];
 };
-const map = L.map("map", { crs: L.CRS.Simple, minZoom: -6, maxZoom: 3, zoomSnap: 0.25,
-                           attributionControl: false, zoomControl: false });
-L.control.zoom({ position: "bottomright" }).addTo(map);
+const map = L.map("map", { crs: L.CRS.Simple, minZoom: -6, maxZoom: 3, zoomSnap: 0.25, attributionControl: false, zoomControl: false });
+const near = () => Math.max(map.getZoom(), map.getMaxZoom() - 2);
 
-// Capa de teselas Deep Zoom (salida de pzmap2dzi, vista superior como el mapa del juego)
 async function addDzi(root) {
-  const [info, xml] = await Promise.all([
-    fetch(root + "map_info.json").then((r) => r.json()),
-    fetch(root + "layer0.dzi").then((r) => r.text())]);
+  const [info, xml] = await Promise.all([fetch(root + "map_info.json").then((r) => r.json()), fetch(root + "layer0.dzi").then((r) => r.text())]);
   const doc = new DOMParser().parseFromString(xml, "application/xml");
   const img = doc.querySelector("Image"), size = doc.querySelector("Size");
   const W = +size.getAttribute("Width"), H = +size.getAttribute("Height");
@@ -138,160 +405,512 @@ async function addDzi(root) {
   const maxLevel = Math.ceil(Math.log2(Math.max(W, H)));
   const sqr = +info.sqr || 1;
   Object.assign(P, { x0: +info.x0 || 0, y0: +info.y0 || 0, sqr, iso: sqr >= 64, scale: 2 ** (+info.skip || 0) });
-  // Acercar más allá de la resolución real solo pixela: vista superior hasta ~16 px por cuadro, isométrica x2.
   const maxZ = P.iso ? 1 : Math.max(1, Math.min(4, Math.round(Math.log2(16 * P.scale / sqr))));
   const minZ = -(maxLevel - 8);
-  const Dzi = L.TileLayer.extend({
-    getTileUrl(c) { return `${root}layer0_files/${maxLevel + c.z}/${c.x}_${c.y}.${fmt}`; }
-  });
+  const Dzi = L.TileLayer.extend({ getTileUrl(c) { return `${root}layer0_files/${maxLevel + c.z}/${c.x}_${c.y}.${fmt}`; } });
   const bounds = L.latLngBounds([L.latLng(0, 0), L.latLng(-H, W)]);
-  new Dzi("", { tileSize: ts, noWrap: true, bounds, minZoom: minZ, maxZoom: maxZ, minNativeZoom: minZ,
-                maxNativeZoom: 0, keepBuffer: 1, updateWhenIdle: true }).addTo(map);
-  map.setMinZoom(minZ); map.setMaxZoom(maxZ); map.setMaxBounds(bounds.pad(0.25));
-  map.fitBounds(bounds);
-  document.getElementById("map").style.background = "#1b1f1d";
+  new Dzi("", { tileSize: ts, noWrap: true, bounds, minZoom: minZ, maxZoom: maxZ, minNativeZoom: minZ, maxNativeZoom: 0,
+                keepBuffer: 1, updateWhenIdle: true }).addTo(map);
+  map.setMinZoom(minZ); map.setMaxZoom(maxZ); map.setMaxBounds(bounds.pad(0.25)); map.fitBounds(bounds);
 }
 
-// Cuadrícula: celdas de 300 tiles, como el mapa del juego
 const Grid = L.GridLayer.extend({
   createTile(c) {
-    const t = document.createElement("canvas"), s = this.getTileSize();
-    t.width = s.x; t.height = s.y;
-    const g = t.getContext("2d"), z = Math.pow(2, c.z);
-    const x0 = c.x * s.x / z, y0 = c.y * s.y / z, span = s.x / z;
-    g.fillStyle = "#0e1210"; g.fillRect(0, 0, s.x, s.y);
-    const steps = z >= 1 ? [10, 100, 300] : z >= 0.06 ? [100, 300] : z >= 0.03 ? [300] : [1500];
-    for (const step of steps) {
-      g.strokeStyle = step >= 300 ? "rgba(92,194,107,.22)" : step === 100 ? "rgba(255,255,255,.05)" : "rgba(255,255,255,.03)";
-      g.lineWidth = step >= 300 ? 1.2 : 1;
-      g.beginPath();
-      for (let x = Math.ceil(x0 / step) * step; x <= x0 + span; x += step) { const px = (x - x0) * z; g.moveTo(px, 0); g.lineTo(px, s.y); }
-      for (let y = Math.ceil(y0 / step) * step; y <= y0 + span; y += step) { const py = (y - y0) * z; g.moveTo(0, py); g.lineTo(s.x, py); }
-      g.stroke();
-    }
-    if (z >= 0.12) {
-      g.fillStyle = "rgba(138,150,143,.55)"; g.font = "10px system-ui";
-      for (let x = Math.ceil(x0 / 300) * 300; x < x0 + span; x += 300)
-        for (let y = Math.ceil(y0 / 300) * 300; y < y0 + span; y += 300)
-          g.fillText(`${x / 300},${y / 300}`, (x - x0) * z + 3, (y - y0) * z + 11);
-    }
-    return t;
+    const t = document.createElement("canvas"), s = this.getTileSize(); t.width = s.x; t.height = s.y;
+    const g = t.getContext("2d"), z = Math.pow(2, c.z), x0 = c.x * s.x / z, y0 = c.y * s.y / z, span = s.x / z;
+    g.fillStyle = "#2F3A27"; g.fillRect(0, 0, s.x, s.y);
+    const step = z >= 0.06 ? 300 : 1500;
+    g.strokeStyle = "rgba(236,233,221,.10)"; g.beginPath();
+    for (let x = Math.ceil(x0 / step) * step; x <= x0 + span; x += step) { const px = (x - x0) * z; g.moveTo(px, 0); g.lineTo(px, s.y); }
+    for (let y = Math.ceil(y0 / step) * step; y <= y0 + span; y += step) { const py = (y - y0) * z; g.moveTo(0, py); g.lineTo(s.x, py); }
+    g.stroke(); return t;
   }
 });
 
-let trailsOn = true, follow = localStorage.getItem("pzmap_follow") || "", fitted = false;
+// ── niebla de guerra: oscuro donde nadie ha estado ──
+let explored = new Set(), CELL = 20, KEYW = 4096, fogOn = store.get("pzmap_fog", "1") === "1";
+const Fog = L.GridLayer.extend({
+  createTile(c) {
+    const t = document.createElement("canvas"), s = this.getTileSize(); t.width = s.x; t.height = s.y;
+    const g = t.getContext("2d");
+    g.fillStyle = "rgba(11,13,9,.84)"; g.fillRect(0, 0, s.x, s.y);
+    if (!explored.size) return t;
+    const nw = L.point(c.x * s.x, c.y * s.y);
+    const corners = [[0, 0], [s.x, 0], [0, s.y], [s.x, s.y]].map(([dx, dy]) => unll(map.unproject(nw.add([dx, dy]), c.z)));
+    const xs = corners.map((p) => p[0] / CELL), ys = corners.map((p) => p[1] / CELL);
+    const px = (x, y) => map.project(ll(x, y), c.z).subtract(nw);
+    const cellPx = map.project(ll(CELL, 0), c.z).distanceTo(map.project(ll(0, 0), c.z));
+    const blur = Math.max(3, Math.min(36, cellPx * 1.1)), pad = Math.ceil(blur * 2 / Math.max(cellPx, 1)) + 1;
+    const cx0 = Math.floor(Math.min(...xs)) - pad, cx1 = Math.ceil(Math.max(...xs)) + pad;
+    const cy0 = Math.floor(Math.min(...ys)) - pad, cy1 = Math.ceil(Math.max(...ys)) + pad;
+    g.globalCompositeOperation = "destination-out";
+    if ("filter" in g) g.filter = `blur(${blur}px)`;
+    g.fillStyle = "#000"; g.beginPath();
+    const draw = (cx, cy) => {
+      const a = px(cx * CELL - 4, cy * CELL - 4), b = px((cx + 1) * CELL + 4, cy * CELL - 4),
+            d = px((cx + 1) * CELL + 4, (cy + 1) * CELL + 4), e = px(cx * CELL - 4, (cy + 1) * CELL + 4);
+      g.moveTo(a.x, a.y); g.lineTo(b.x, b.y); g.lineTo(d.x, d.y); g.lineTo(e.x, e.y); g.closePath();
+    };
+    const area = (cx1 - cx0 + 1) * (cy1 - cy0 + 1);
+    if (area < explored.size) {
+      for (let cy = cy0; cy <= cy1; cy++) for (let cx = cx0; cx <= cx1; cx++) if (explored.has(cy * KEYW + cx)) draw(cx, cy);
+    } else {
+      for (const k of explored) { const cx = k % KEYW, cy = Math.floor(k / KEYW);
+        if (cx >= cx0 && cx <= cx1 && cy >= cy0 && cy <= cy1) draw(cx, cy); }
+    }
+    g.fill(); return t;
+  }
+});
+map.createPane("fog").style.zIndex = 350;   // encima del mapa, debajo de recorridos y marcadores
+const fog = new Fog({ tileSize: 512, pane: "fog", updateWhenIdle: true, keepBuffer: 1 });
+let fogTimer = null;
+const refreshFog = () => { if (fogTimer) return; fogTimer = setTimeout(() => { fogTimer = null; if (fogOn) fog.redraw(); }, 4000); };
+function setFog(on) {
+  fogOn = on; store.set("pzmap_fog", on ? "1" : "0");
+  $("fogOn").setAttribute("aria-pressed", on); $("fogOff").setAttribute("aria-pressed", !on);
+  on ? fog.addTo(map) : fog.remove();
+}
+$("fogOn").onclick = () => setFog(true);
+$("fogOff").onclick = () => setFog(false);
+const km2 = (n) => (n * CELL * CELL / 1e6).toLocaleString("es", { maximumFractionDigits: n * CELL * CELL < 1e6 ? 2 : 1 });
+
+// ── recorridos: solo el de quien sigues, o todos si los activas. Suaves y redondeados. ──
+let trailsAll = false, follow = store.get("pzmap_follow");
 const markers = {}, trails = {};
-const colors = ["#5cc26b", "#e3b341", "#5aa9e6", "#e07be0", "#f08a5d", "#7ce0d3", "#c3e05a", "#ff7a90"];
-const colorOf = (n) => { let h = 0; for (const ch of n) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return colors[h % colors.length]; };
-const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const ago = (t, now) => { const s = Math.max(0, Math.round(now - t)); return s < 60 ? `hace ${s}s` : s < 3600 ? `hace ${Math.round(s / 60)} min` : `hace ${Math.round(s / 3600)} h`; };
+function smooth(pts) {               // Chaikin: esquinas redondeadas
+  for (let it = 0; it < 2 && pts.length > 2; it++) {
+    const out = [pts[0]];
+    for (let i = 0; i < pts.length - 1; i++) {
+      const [ax, ay] = pts[i], [bx, by] = pts[i + 1];
+      out.push([ax * 0.75 + bx * 0.25, ay * 0.75 + by * 0.25], [ax * 0.25 + bx * 0.75, ay * 0.25 + by * 0.75]);
+    }
+    out.push(pts[pts.length - 1]); pts = out;
+  }
+  return pts;
+}
+function trailFor(p) {
+  const col = colorOf(p.name);
+  const pts = smooth((p.trail || []).map(([x, y]) => [x, y])).map(([x, y]) => ll(x, y));
+  let t = trails[p.name];
+  if (!t) t = trails[p.name] = {
+    glow: L.polyline([], { color: col, weight: 12, opacity: 0.14, lineCap: "round", lineJoin: "round", smoothFactor: 1.5, interactive: false }),
+    line: L.polyline([], { color: col, weight: 4, opacity: 0.85, lineCap: "round", lineJoin: "round", smoothFactor: 1.5, interactive: false }) };
+  t.glow.setLatLngs(pts); t.line.setLatLngs(pts); t.glow.setStyle({ color: col }); t.line.setStyle({ color: col });
+  const show = !TL.on && (trailsAll || follow === p.name);
+  for (const l of [t.glow, t.line]) show ? l.addTo(map) : l.remove();
+}
+$("btnTrails").onclick = () => { trailsAll = !trailsAll; $("btnTrails").setAttribute("aria-pressed", trailsAll); S.players.forEach(trailFor); };
+function setFollow(name) {
+  follow = name || ""; store.set("pzmap_follow", follow);
+  $("btnFollow").setAttribute("aria-pressed", !!follow);
+  const p = S.players.find((x) => x.name === follow);
+  if (p) map.flyTo(ll(p.x, p.y), near());
+  if (follow && navigator.wakeLock) navigator.wakeLock.request("screen").catch(() => {});
+  renderPlayers();
+}
+$("btnFollow").onclick = () => {
+  if (follow) return setFollow("");
+  const me = meP() || S.players.find((p) => p.online);
+  if (me) setFollow(me.name);
+};
+map.on("dragstart", () => { if (follow) { follow = ""; store.set("pzmap_follow", ""); $("btnFollow").setAttribute("aria-pressed", false); renderPlayers(); } });
+
+// ── marcadores de jugadores ──
+function pinHtml(p) {
+  const cls = "pin" + (p.online ? "" : " off") + (p.dead ? " dead" : "");
+  const inner = p.dead ? "✕" : esc((p.name[0] || "?").toUpperCase());
+  const label = follow === p.name ? `<div class="pinlabel">${esc(p.name)}</div>` : "";
+  return `<div style="position:relative"><div class="${cls}" style="background:${colorOf(p.name)}">${inner}</div>${label}</div>`;
+}
+function placeMarkers() {
+  const seen = new Set();
+  for (const p of S.players) {
+    seen.add(p.name);
+    const ic = L.divIcon({ className: "", html: pinHtml(p), iconSize: [36, 36], iconAnchor: [18, 18] });
+    if (!markers[p.name]) markers[p.name] = L.marker(ll(p.x, p.y), { icon: ic, zIndexOffset: 1000, keyboard: false })
+      .on("click", () => setFollow(p.name)).addTo(map);
+    else { markers[p.name].setLatLng(ll(p.x, p.y)); markers[p.name].setIcon(ic); }
+    markers[p.name].bindTooltip(`${esc(p.name)} · ${p.dead ? "murió" : Math.round(p.hp) + " vida"}${p.vehicle ? " · " + esc(p.vehicle.name || "vehículo") : ""}`, { direction: "top", offset: [0, -20] });
+    TL.on ? markers[p.name].remove() : markers[p.name].addTo(map);
+    trailFor(p);
+    if (follow === p.name && p.online && !TL.on) map.panTo(ll(p.x, p.y), { animate: true });
+  }
+  for (const n of Object.keys(markers)) if (!seen.has(n)) { markers[n].remove(); delete markers[n]; }
+}
+
+// ── marcas compartidas ──
+const KIND = { base: ["Base", "home"], loot: ["Loot", "box"], peligro: ["Peligro", "alert"], carro: ["Carro", "car"], otro: ["Otro", "dot"] };
+const markLayer = L.layerGroup().addTo(map);
+function renderMarks() {
+  markLayer.clearLayers();
+  for (const m of S.marks) {
+    const [label, ic] = KIND[m.kind] || KIND.otro;
+    const html = `<div class="mark ${esc(m.kind)}"><span><svg><use href="#i-${ic}"/></svg></span>${esc(m.label || label)}</div>`;
+    L.marker(ll(m.x, m.y), { icon: L.divIcon({ className: "", html, iconSize: [0, 0] }), zIndexOffset: 500 })
+      .on("click", () => markModal(m)).addTo(markLayer);
+  }
+}
+
+// ── pings ──
+const pingLayer = L.layerGroup().addTo(map);
+const DIRS = ["E", "NE", "N", "NO", "O", "SO", "S", "SE"];
+function rel(x, y) {
+  const me = meP(); if (!me || !me.online) return "";
+  const dx = x - me.x, dy = y - me.y, d = Math.round(Math.hypot(dx, dy));
+  if (d < 8) return "aquí cerca";
+  const i = Math.round(Math.atan2(-dy, dx) / (2 * Math.PI) * 8 + 8) % 8;
+  return `${d} m al ${DIRS[i]}`;
+}
+function renderPings() {
+  pingLayer.clearLayers();
+  for (const p of S.pings) {
+    const r = rel(p.x, p.y);
+    const html = `<div class="ping"><div class="ring"></div><div class="bubble"><b>${esc(p.from)} marcó aquí</b><br>${[r, ago(p.t, S.now)].filter(Boolean).join(" · ")}${p.text ? " · " + esc(p.text) : ""}</div></div>`;
+    L.marker(ll(p.x, p.y), { icon: L.divIcon({ className: "", html, iconSize: [0, 0] }), interactive: false, zIndexOffset: 2000 }).addTo(pingLayer);
+  }
+}
+
+// ── tocar el mapa: ping o marca ──
+let armed = "";
+function arm(mode) {
+  armed = mode;
+  $("banner").classList.toggle("hidden", !mode);
+  $("bannerTxt").textContent = mode === "ping" ? "Toca el mapa para hacer ping" : "Toca el mapa donde va la marca";
+  $("fab").classList.toggle("armed", mode === "ping");
+  $("btnMark").setAttribute("aria-pressed", mode === "mark");
+  if (mode && innerWidth < 900) setTab("mapa");
+}
+$("fab").onclick = () => arm(armed === "ping" ? "" : "ping");
+$("btnMark").onclick = () => arm(armed === "mark" ? "" : "mark");
+$("bannerCancel").onclick = () => arm("");
+map.on("click", (e) => {
+  if (!armed) return;
+  const [x, y] = unll(e.latlng), mode = armed; arm("");
+  ensureMe(() => {
+    if (mode === "ping") send("POST", "api/ping", { x, y, by: ME }).catch(toast);
+    else markModal({ x: Math.round(x), y: Math.round(y), kind: "base", label: "" }, true);
+  });
+});
+map.on("contextmenu", (e) => {
+  const [x, y] = unll(e.latlng);
+  ensureMe(() => quickModal(x, y));
+});
+
+// ───────────────────────── modales ─────────────────────────
+function modal(html, cls = "") {
+  $("modal").innerHTML = `<div class="modal ${cls}" id="mbg"><div class="box" role="dialog" aria-modal="true">${html}</div></div>`;
+  $("mbg").onclick = (e) => { if (e.target.id === "mbg") closeModal(); };
+  const f = $("modal").querySelector("input, button"); if (f) setTimeout(() => f.focus(), 30);
+}
+const closeModal = () => { $("modal").innerHTML = ""; };
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") { closeModal(); arm(""); } });
+function toast(err) { modal(`<h3>Ups</h3><div>${esc(err.message || err)}</div><div class="acts"><button class="btn" onclick="closeModal()">Ok</button></div>`); }
+
+function ensureMe(then) {
+  if (ME) return then();
+  const names = [...new Set(S.players.map((p) => p.name))];
+  modal(`<h3>¿Quién eres?</h3><div class="muted">Para firmar tus pings, marcas y tareas. Se guarda en este navegador.</div>
+    ${names.length ? `<div class="kinds">${names.map((n) => `<button type="button" data-n="${esc(n)}">${esc(n)}</button>`).join("")}</div>` : ""}
+    <label for="meIn" class="sr">Tu nombre</label><input type="text" id="meIn" maxlength="40" placeholder="Tu nombre en el juego">
+    <div class="acts"><button class="btn" id="meOk">Listo</button></div>`);
+  const done = (n) => { n = (n || "").trim(); if (!n) return; ME = n; store.set("pzmap_me", n); closeModal(); renderAll(); then(); };
+  $("modal").querySelectorAll("[data-n]").forEach((b) => b.onclick = () => done(b.dataset.n));
+  $("meOk").onclick = () => done($("meIn").value);
+  $("meIn").onkeydown = (e) => { if (e.key === "Enter") done($("meIn").value); };
+}
+
+function quickModal(x, y) {
+  modal(`<h3>Este punto</h3><div class="muted">x ${Math.round(x)}, y ${Math.round(y)}</div>
+    <div class="acts" style="justify-content:stretch"><button class="btn" id="qPing" style="flex:1">${icon("target")} Ping aquí</button>
+    <button class="btn ghost" id="qMark" style="flex:1">${icon("pin")} Marcar aquí</button></div>`);
+  $("qPing").onclick = () => { closeModal(); send("POST", "api/ping", { x, y, by: ME }).catch(toast); };
+  $("qMark").onclick = () => markModal({ x: Math.round(x), y: Math.round(y), kind: "base", label: "" }, true);
+}
+
+function markModal(m, isNew = false) {
+  let kind = m.kind || "otro";
+  modal(`<h3>${isNew ? "Nueva marca" : "Marca"}</h3>
+    ${isNew ? "" : `<div class="muted">De ${esc(m.by)} · ${ago(m.t, S.now)}</div>`}
+    <div class="kinds" id="mk">${Object.entries(KIND).map(([k, [lab, ic]]) => `<button type="button" data-k="${k}" aria-pressed="${k === kind}">${icon(ic)} ${lab}</button>`).join("")}</div>
+    <label for="mLabel" class="sr">Nombre de la marca</label><input type="text" id="mLabel" maxlength="40" placeholder="Nombre (opcional)" value="${esc(m.label)}">
+    <div class="acts">${isNew ? "" : `<button class="btn ghost" id="mDel">Borrar</button>`}<button class="btn ghost" id="mNo">Cancelar</button><button class="btn" id="mOk">Guardar</button></div>`);
+  $("modal").querySelectorAll("[data-k]").forEach((b) => b.onclick = () => {
+    kind = b.dataset.k; $("modal").querySelectorAll("[data-k]").forEach((x) => x.setAttribute("aria-pressed", x === b)); });
+  $("mNo").onclick = closeModal;
+  if (!isNew) $("mDel").onclick = () => { closeModal(); send("DELETE", `api/marks/${m.id}`).catch(toast); };
+  $("mOk").onclick = () => {
+    const label = $("mLabel").value.trim(); closeModal();
+    (isNew ? send("POST", "api/marks", { x: m.x, y: m.y, kind, label, by: ME }) : send("PATCH", `api/marks/${m.id}`, { kind, label })).catch(toast);
+  };
+}
+
+// ───────────────────────── pestañas ─────────────────────────
+const TABS = [["mapa", "Mapa", "map"], ["grupo", "Grupo", "users"], ["tareas", "Tareas", "check"], ["album", "Álbum", "image"], ["logros", "Logros", "trophy"]];
+let TAB = "mapa";
+function setTab(t) {
+  if (innerWidth >= 900 && t === "mapa") t = TAB === "mapa" ? "grupo" : TAB;
+  TAB = t; document.body.dataset.tab = t;
+  document.querySelectorAll("[data-panel]").forEach((s) => s.classList.toggle("hidden", s.dataset.panel !== t));
+  document.querySelectorAll("[data-tab]").forEach((b) => b.dataset.tab === t ? b.setAttribute("aria-current", "page") : b.removeAttribute("aria-current"));
+  if (t === "logros") loadLogros();
+  if (t === "album") renderPhotos();
+  setTimeout(() => map.invalidateSize(), 50);
+}
+function buildTabs() {
+  const tabs = FEATURES ? TABS : TABS.slice(0, 2);
+  $("tabs").innerHTML = tabs.map(([k, l, ic]) => `<button type="button" data-tab="${k}">${icon(ic)}${l}</button>`).join("");
+  $("deskTabs").innerHTML = tabs.slice(1).map(([k, l]) => `<button type="button" data-tab="${k}">${l}</button>`).join("");
+  document.querySelectorAll("[data-tab]").forEach((b) => b.onclick = () => setTab(b.dataset.tab));
+}
+addEventListener("resize", () => { if (innerWidth >= 900 && TAB === "mapa") setTab("grupo"); });
+
+// ───────────────────────── render ─────────────────────────
+const MOOD = { hungry: "Hambre", thirst: "Sed", tired: "Cansancio", panic: "Pánico", pain: "Dolor", endurance: "Agotado",
+  stress: "Estrés", unhappy: "Triste", sick: "Mareo", drunk: "Ebrio", wet: "Mojado", cold: "Frío", hot: "Calor", heavy: "Mucho peso" };
+const LVL = ["", "leve", "", "fuerte", "grave"];
+const moodTxt = (k, v) => `${MOOD[k] || k}${LVL[v] ? " " + LVL[v] : ""}`;
+const WOUND = { sangra: "Sangrando", mordida: "Mordida", profunda: "Herida profunda", "rasguño": "Rasguño", corte: "Corte", fractura: "Fractura", bala: "Bala" };
+const hurt = (p) => p.online && !p.dead && (p.hp < 50 || (p.wounds || []).some((w) => w.w.includes("sangra") && !w.band));
+const hpColor = (p) => p.hp < 35 ? "#E58B7B" : p.hp < 65 ? "#E8C46A" : colorOf(p.name);
+function stateLine(p) {
+  if (p.dead) return "murió";
+  if (!p.online) return "desconectado · " + ago(p.seen, S.now);
+  const parts = [p.town || "", p.vehicle ? `en ${p.vehicle.name || "vehículo"}${p.vehicle.fuel != null ? ` (${p.vehicle.fuel}%)` : ""}` : p.z > 0 ? `piso ${p.z}` : "a pie"];
+  return parts.filter(Boolean).join(" · ");
+}
+
+function renderTop() {
+  const w = S.world || {}, on = S.players.filter((p) => p.online);
+  if (S.updated) {
+    $("when").textContent = `DÍA ${w.day || "?"} · ${hhmm(w.hour, w.minute)}`;
+    $("who").textContent = on.length ? `${w.host ? w.host + " hostea · " : ""}${on.length} en línea` : `Nadie está jugando · última vez ${ago(S.updated, S.now)}`;
+  } else { $("when").textContent = "PZ LIVE MAP"; $("who").textContent = "Aún no hay datos de la partida"; }
+  $("grupoSub").textContent = S.updated ? `Día ${w.day || "?"} · ${hhmm(w.hour, w.minute)} · ${on.length} en línea` : "—";
+  $("fogOn").textContent = `Explorado · ${km2(explored.size)} km²`;
+}
+
+function renderPlayers() {
+  // hoja inferior (celular)
+  $("mini").innerHTML = S.players.length ? S.players.map((p) => {
+    const moods = Object.entries(p.moodles || {}).sort((a, b) => b[1] - a[1]).slice(0, 2).map(([k, v]) => moodTxt(k, v));
+    const bleed = (p.wounds || []).some((w) => w.w.includes("sangra") && !w.band);
+    const st = p.online ? [bleed ? "Sangrando" : "", ...moods].filter(Boolean).slice(0, 2).join(" · ") || stateLine(p) : stateLine(p);
+    return `<button type="button" class="card${hurt(p) ? " hurt" : ""}${follow === p.name ? " sel" : ""}${p.online ? "" : " off"}" data-follow="${esc(p.name)}">
+      <span class="nm"><i style="background:${colorOf(p.name)}"></i>${esc(p.name)}</span>
+      <span class="big" style="color:${hpColor(p)}">${p.dead ? "✕" : Math.round(p.hp)}<small> vida</small></span>
+      <span class="bar" style="height:5px"><i style="width:${p.dead ? 0 : p.hp}%;background:${hpColor(p)}"></i></span>
+      <span class="st">${esc(st)}</span></button>`;
+  }).join("") : `<div class="empty">Esperando a que alguien juegue…</div>`;
+  $("mini").querySelectorAll("[data-follow]").forEach((b) => b.onclick = () => setFollow(b.dataset.follow === follow ? "" : b.dataset.follow));
+  if ($("sheet").offsetHeight) document.documentElement.style.setProperty("--sheet-h", $("sheet").offsetHeight + "px");
+
+  // pestaña Grupo
+  $("groupList").innerHTML = S.players.length ? S.players.map((p) => {
+    const tags = [];
+    if (!p.dead && p.online) {
+      for (const w of p.wounds || []) tags.push(`<span class="tag${w.band ? "" : " bad"}">${esc(w.w.map((k) => WOUND[k] || k).join(", "))} · ${esc(w.part)}${w.band ? " (vendado)" : ""}</span>`);
+      for (const [k, v] of Object.entries(p.moodles || {}).sort((a, b) => b[1] - a[1])) tags.push(`<span class="tag">${esc(moodTxt(k, v))}</span>`);
+      if (p.weapon) tags.push(`<span class="tag soft">${esc(p.weapon)}</span>`);
+      if (p.maxWeight) tags.push(`<span class="tag soft">${esc(p.bag || "Carga")} ${String(p.weight).replace(".", ",")}/${Math.round(p.maxWeight)}</span>`);
+    }
+    return `<section class="card2${hurt(p) ? " hurt" : ""}${p.online ? "" : " off"}">
+      <div class="prow"><div class="avatar" style="background:${colorOf(p.name)}">${esc((p.name[0] || "?").toUpperCase())}</div>
+        <div class="nm"><b>${esc(p.name)}</b><span>${esc(stateLine(p))}${p.kills != null ? " · " + p.kills + " kills" : ""}</span></div>
+        <div class="hpnum"><b style="color:${hpColor(p)}">${p.dead ? "✕" : Math.round(p.hp)}</b><span>vida</span></div></div>
+      <div class="bar"><i style="width:${p.dead ? 0 : p.hp}%;background:${hpColor(p)}"></i></div>
+      ${tags.length ? `<div class="tags">${tags.join("")}</div>` : ""}
+      <div style="display:flex;gap:8px"><button class="btn ghost" type="button" data-go="${esc(p.name)}" style="min-height:40px">${icon("locate")} Ver en el mapa</button></div>
+    </section>`;
+  }).join("") : `<div class="empty">Cuando alguien abra la partida, aquí verás su vida, estados, heridas y lo que lleva.</div>`;
+  $("groupList").querySelectorAll("[data-go]").forEach((b) => b.onclick = () => { if (innerWidth < 900) setTab("mapa"); setFollow(b.dataset.go); });
+  placeMarkers();
+}
+
+function renderLog(el, events) {
+  el.innerHTML = events.length ? events.slice(0, 30).map((e) =>
+    `<div class="log k-${esc(e.kind)}"><time>${e.day ? `D${e.day} ${hhmm(e.hour, e.minute)}` : new Date(e.t * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time>${esc(e.text)}</div>`).join("")
+    : `<div class="empty">Sin actividad todavía.</div>`;
+}
+
+function renderTasks() {
+  const ts = S.tasks || [], done = ts.filter((t) => t.done).length;
+  $("tareasSub").textContent = ts.length ? `${done} de ${ts.length} hechas` : "Lo que falta, entre todos";
+  const order = [...ts].sort((a, b) => a.done - b.done || a.t - b.t);
+  $("taskList").innerHTML = order.length ? order.map((t) => `<div class="task${t.done ? " done" : ""}">
+      <input type="checkbox" id="t${esc(t.id)}" data-done="${esc(t.id)}" ${t.done ? "checked" : ""}>
+      <label class="tx" for="t${esc(t.id)}">${esc(t.text)}<span class="by">${t.done && t.doneBy ? "hecha por " + esc(t.doneBy) : "de " + esc(t.by)}</span></label>
+      <span class="ini" style="background:${colorOf(t.by)}" aria-hidden="true">${esc((t.by[0] || "?").toUpperCase())}</span>
+      <button type="button" class="x" data-del="${esc(t.id)}" aria-label="Borrar tarea"><svg class="ico" style="width:18px;height:18px"><use href="#i-x"/></svg></button></div>`).join("")
+    : `<div class="empty">Anoten lo que falta: gasolina, cercar la base, ir a la armería…</div>`;
+  $("taskList").querySelectorAll("[data-done]").forEach((c) => c.onchange = () => ensureMe(() => send("PATCH", `api/tasks/${c.dataset.done}`, { done: c.checked, by: ME }).catch(toast)));
+  $("taskList").querySelectorAll("[data-del]").forEach((b) => b.onclick = () => send("DELETE", `api/tasks/${b.dataset.del}`).catch(toast));
+}
+$("taskForm").onsubmit = (e) => {
+  e.preventDefault(); const text = $("taskInput").value.trim(); if (!text) return;
+  ensureMe(() => send("POST", "api/tasks", { text, by: ME }).then(() => { $("taskInput").value = ""; }).catch(toast));
+};
+
+// ── álbum ──
+let PHOTOS = [], photoLayer = L.layerGroup(), photosOnMap = false;
+async function loadPhotos() { if (!FEATURES) return; PHOTOS = await fetch(q("api/photos")).then((r) => r.json()).catch(() => []); renderPhotos(); }
+const purl = (f) => q(`photos/${encodeURIComponent(f)}`);
+function renderPhotos() {
+  $("albumSub").textContent = PHOTOS.length ? `${PHOTOS.length} ${PHOTOS.length === 1 ? "captura" : "capturas"} · ${new Set(PHOTOS.map((p) => p.place)).size} ${new Set(PHOTOS.map((p) => p.place)).size === 1 ? "lugar" : "lugares"}` : "Aún sin capturas";
+  const byDay = {}; for (const p of [...PHOTOS].reverse()) (byDay[p.day || 0] ||= []).push(p);
+  $("photoList").innerHTML = Object.keys(byDay).sort((a, b) => b - a).map((d) => `<div class="day">DÍA ${d}</div><div class="photos">${byDay[d].map((p) =>
+    `<button type="button" class="photo" data-ph="${esc(p.id)}"><img loading="lazy" src="${purl(p.file)}" alt="Captura de ${esc(p.by)} en ${esc(p.place)}"><span><b>${esc(p.place)}</b><br><em>${esc(p.by)} · ${hhmm(p.hour, p.minute)}</em></span></button>`).join("")}</div>`).join("")
+    || `<div class="empty">Todavía no hay fotos.</div>`;
+  $("photoList").querySelectorAll("[data-ph]").forEach((b) => b.onclick = () => openPhoto(PHOTOS.find((p) => p.id === b.dataset.ph)));
+  photoLayer.clearLayers();
+  for (const p of PHOTOS) L.marker(ll(p.x, p.y), { icon: L.divIcon({ className: "photomark", html: `<img src="${purl(p.file)}" alt="">`, iconSize: [40, 40], iconAnchor: [20, 20] }) })
+    .on("click", () => openPhoto(p)).addTo(photoLayer);
+}
+function openPhoto(p) {
+  if (!p) return;
+  modal(`<img src="${purl(p.file)}" alt="Captura de ${esc(p.by)}"><div><b>${esc(p.place)}</b> · día ${p.day} · ${hhmm(p.hour, p.minute)}<br><span class="muted">${esc(p.by)}</span></div>
+    <div class="acts"><button class="btn ghost" id="phMap">${icon("map")} Ver en el mapa</button><button class="btn" onclick="closeModal()">Cerrar</button></div>`, "lightbox");
+  $("phMap").onclick = () => { closeModal(); setPhotosOnMap(true); if (innerWidth < 900) setTab("mapa"); map.flyTo(ll(p.x, p.y), near()); };
+}
+function setPhotosOnMap(on) {
+  photosOnMap = on; $("albFotos").setAttribute("aria-pressed", !on); $("albMapa").setAttribute("aria-pressed", on);
+  on ? photoLayer.addTo(map) : photoLayer.remove();
+}
+$("albFotos").onclick = () => setPhotosOnMap(false);
+$("albMapa").onclick = () => { setPhotosOnMap(true); if (innerWidth < 900) setTab("mapa"); };
+
+// ── logros ──
+async function loadLogros() {
+  if (!FEATURES) return;
+  const a = await fetch(q("api/achievements")).then((r) => r.json()).catch(() => null);
+  if (!a) return;
+  const t = a.totals, done = a.achievements.filter((x) => x.done).length;
+  $("logros").innerHTML = `<div class="totals"><div><b>${t.day}</b><span>días</span></div><div><b>${t.kills}</b><span>kills</span></div>
+      <div><b>${Math.round(t.km)}</b><span>km</span></div><div><b>${km2(explored.size)}</b><span>km² vistos</span></div></div>
+    <section class="card2" style="padding:6px 16px 8px;gap:0"><h2 class="sec" style="margin:8px 0 4px">Récords</h2>
+      ${a.records.map((r) => `<div class="rec"><span>${esc(r.label)}</span><span>${r.value ? `<b style="color:${colorOf(r.name)}">${esc(r.name)}</b> · ${esc(r.value)}` : "—"}</span></div>`).join("")}</section>
+    <h2 class="sec">Del grupo · ${done} de ${a.achievements.length}</h2>
+    <div class="achs">${a.achievements.map((x) => `<div class="ach${x.done ? " done" : ""}"><b>${esc(x.name)}</b><span>${esc(x.desc)}${x.done ? "" : ` · ${String(x.value).replace(".", ",")}/${x.goal}`}</span>
+      ${x.done ? "" : `<div class="bar"><i style="width:${Math.min(100, x.value / x.goal * 100)}%;background:var(--text)"></i></div>`}</div>`).join("")}</div>
+    ${t.towns.length ? `<div class="muted" style="font-size:12px;margin-bottom:14px">Pueblos visitados: ${t.towns.map(esc).join(", ")}</div>` : ""}
+    <h2 class="sec">Bitácora</h2><div id="logMob"></div>`;
+  renderLog($("logMob"), S.events);
+}
+
+// ── timelapse ──
+const TL = { on: false, rows: [], events: [], i: 0, speed: 8, timer: null, layers: L.layerGroup() };
+async function openTl() {
+  if (innerWidth < 900) setTab("mapa");
+  const h = await fetch(q("api/history")).then((r) => r.json()).catch(() => ({ rows: [], events: [] }));
+  TL.rows = h.rows; TL.events = h.events.slice().sort((a, b) => a.t - b.t);
+  if (!TL.rows.length) return toast("Todavía no hay recorridos guardados. Jueguen un rato y vuelvan.");
+  TL.on = true; $("tl").classList.remove("hidden"); $("btnTl").setAttribute("aria-pressed", true);
+  document.querySelectorAll(".sheet, .fab, #fogChips").forEach((e) => e.classList.add("hidden"));
+  $("tlRange").max = TL.rows.length - 1; TL.i = 0; TL.layers.addTo(map); placeMarkers(); markLayer.remove(); pingLayer.remove();
+  const pts = TL.rows.map((r) => ll(r[2], r[3])); map.fitBounds(L.latLngBounds(pts).pad(0.2));
+  drawTl(); playTl(true);
+}
+function closeTl() {
+  playTl(false); TL.on = false; TL.layers.clearLayers(); TL.layers.remove();
+  $("tl").classList.add("hidden"); $("btnTl").setAttribute("aria-pressed", false);
+  document.querySelectorAll(".sheet, .fab, #fogChips").forEach((e) => e.classList.remove("hidden"));
+  markLayer.addTo(map); pingLayer.addTo(map); placeMarkers();
+}
+function drawTl() {
+  TL.layers.clearLayers();
+  const upto = TL.rows.slice(0, TL.i + 1), byName = {};
+  for (const r of upto) (byName[r[1]] ||= []).push([r[2], r[3]]);
+  for (const [n, pts] of Object.entries(byName)) {
+    const col = colorOf(n), lat = smooth(pts).map(([x, y]) => ll(x, y));
+    L.polyline(lat, { color: col, weight: 10, opacity: 0.14, lineCap: "round", lineJoin: "round", interactive: false }).addTo(TL.layers);
+    L.polyline(lat, { color: col, weight: 4, opacity: 0.9, lineCap: "round", lineJoin: "round", interactive: false }).addTo(TL.layers);
+    const [x, y] = pts[pts.length - 1];
+    L.circleMarker(ll(x, y), { radius: 9, color: "#12150F", weight: 3, fillColor: col, fillOpacity: 1 }).bindTooltip(esc(n), { permanent: true, direction: "right", offset: [10, 0], className: "tip" }).addTo(TL.layers);
+  }
+  const r = TL.rows[TL.i];
+  $("tlDay").innerHTML = `DÍA ${r[4] ?? "?"} <span class="muted">/ ${TL.rows[TL.rows.length - 1][4] ?? "?"}</span>`;
+  $("tlRange").value = TL.i;
+  let ev = null; for (const e of TL.events) { if (e.t <= r[0]) ev = e; else break; }
+  $("tlCap").innerHTML = ev ? `<span class="muted">Día ${ev.day ?? "?"} · ${hhmm(ev.hour, ev.minute)} —</span> ${esc(ev.text)}` : `<span class="muted">Día ${r[4] ?? "?"} · ${hhmm(r[5], r[6])}</span>`;
+}
+function playTl(on) {
+  clearInterval(TL.timer); TL.timer = null;
+  $("tlPlay").innerHTML = `<svg class="ico" style="width:24px;height:24px"><use href="#i-${on ? "pause" : "play"}"/></svg>`;
+  $("tlPlay").setAttribute("aria-label", on ? "Pausar" : "Reproducir");
+  if (!on) return;
+  if (TL.i >= TL.rows.length - 1) TL.i = 0;
+  const step = Math.max(1, Math.round(TL.rows.length / 1200 * TL.speed));   // x1 ≈ 2 min, x8 ≈ 15 s
+  TL.timer = setInterval(() => { TL.i = Math.min(TL.rows.length - 1, TL.i + step); drawTl(); if (TL.i >= TL.rows.length - 1) playTl(false); }, 100);
+}
+$("btnTl").onclick = () => TL.on ? closeTl() : openTl();
+$("openTl").onclick = openTl;
+$("tlClose").onclick = closeTl;
+$("tlPlay").onclick = () => playTl(!TL.timer);
+$("tlRange").oninput = (e) => { playTl(false); TL.i = +e.target.value; drawTl(); };
+document.querySelectorAll("[data-speed]").forEach((b) => b.onclick = () => {
+  TL.speed = +b.dataset.speed; document.querySelectorAll("[data-speed]").forEach((x) => x.setAttribute("aria-pressed", x === b));
+  if (TL.timer) playTl(true);
+});
+
+function renderAll() {
+  renderTop(); renderPlayers(); renderMarks(); renderPings(); renderTasks();
+  renderLog($("logDesk"), S.events); if ($("logMob")) renderLog($("logMob"), S.events);
+}
+
+// ───────────────────────── conexión ─────────────────────────
+let fitted = false, lastPhotos = -1;
+function onState(s) {
+  S = s;
+  for (const k of s.new_cells || []) explored.add(k);
+  if ((s.new_cells || []).length) refreshFog();
+  renderAll();
+  if (!fitted && s.players.some((p) => p.online)) {
+    fitted = true;
+    const f = s.players.find((p) => p.name === follow) || meP() || s.players.find((p) => p.online);
+    if (f) map.setView(ll(f.x, f.y), near());
+  }
+  if (FEATURES && s.photos_n !== lastPhotos) { lastPhotos = s.photos_n; loadPhotos(); }
+}
+function setLive(ok) { $("live").classList.toggle("off", !ok); $("liveTxt").textContent = ok ? "EN VIVO" : "RECONECTANDO"; }
+function connect() {
+  const es = new EventSource(q("api/stream"));
+  es.onmessage = (e) => { setLive(true); onState(JSON.parse(e.data)); };
+  es.onerror = () => setLive(false);
+  fetch(q("api/state")).then((r) => {
+    if (r.status === 403) { es.close(); store.set("pzmap_key", ""); KEY = ""; showGate(); }
+  });
+  if (FEATURES) fetch(q("api/explored")).then((r) => r.json()).then((d) => {
+    CELL = d.cell || 20; KEYW = d.keyw || 4096; for (const k of d.cells) explored.add(k); fog.redraw(); renderTop();
+  }).catch(() => {});
+  setInterval(() => { S.now = Date.now() / 1000; renderPings(); renderTop(); }, 10000);
+}
+function showGate() {
+  modal(`<h3>Llave de acceso</h3><div class="muted">Pídela al que montó el mapa.</div>
+    <label for="keyIn" class="sr">Llave</label><input type="text" id="keyIn" autocomplete="off" placeholder="Llave">
+    <div class="acts"><button class="btn" id="keyOk">Entrar</button></div>`);
+  $("keyOk").onclick = () => { KEY = $("keyIn").value.trim(); store.set("pzmap_key", KEY); closeModal(); connect(); };
+}
 
 async function boot() {
   const cfg = await fetch(BASE + "config.json").then((r) => r.json()).catch(() => ({}));
+  FEATURES = cfg.features !== false;
   document.title = cfg.title || "PZ Live Map";
-  document.getElementById("title").textContent = cfg.title || "PZ Live Map";
+  buildTabs(); setTab(innerWidth >= 900 ? "grupo" : "mapa");
+  if (!FEATURES) document.querySelectorAll("#fab, #btnMark, #btnTl, #fogChips").forEach((e) => e.classList.add("hidden"));
   let hasDzi = false;
   if (cfg.dzi) { try { await addDzi(BASE + cfg.dzi); hasDzi = true; } catch (e) { console.warn("DZI", e); } }
   if (!hasDzi) {
     map.fitBounds([ll(0, 0), ll(WORLD.w, WORLD.h)]);
     if (cfg.tiles) L.tileLayer(cfg.tiles, { noWrap: true, minZoom: -6, maxZoom: 3 }).addTo(map);
     else new Grid({ tileSize: 256, noWrap: true }).addTo(map);
+    const towns = await fetch(BASE + "towns.json").then((r) => r.json()).catch(() => []);
+    for (const t of towns) L.marker(ll(t.x, t.y), { interactive: false, icon: L.divIcon({ className: "", html: `<div class="town">${esc(t.name)}</div>` }) }).addTo(map);
   }
-  if (cfg.image && cfg.image_bounds) {
-    const [x0, y0, x1, y1] = cfg.image_bounds;
-    L.imageOverlay(BASE + "map.png", [ll(x0, y0), ll(x1, y1)], { opacity: 0.9 }).addTo(map);
-  }
-  const towns = hasDzi && !cfg.towns_on_map ? [] : await fetch(BASE + "towns.json").then((r) => r.json()).catch(() => []);
-  for (const t of towns)
-    L.marker(ll(t.x, t.y), { interactive: false, icon: L.divIcon({ className: "", html: `<div class="town">${esc(t.name)}</div>` }) }).addTo(map);
+  if (cfg.image && cfg.image_bounds) { const [x0, y0, x1, y1] = cfg.image_bounds; L.imageOverlay(BASE + "map.png", [ll(x0, y0), ll(x1, y1)], { opacity: 0.9 }).addTo(map); }
+  if (FEATURES) setFog(fogOn);
+  $("btnFollow").setAttribute("aria-pressed", !!follow);
   if (cfg.need_key && !KEY) return showGate();
   connect();
 }
-
-function showGate() {
-  const gate = document.getElementById("gate"); gate.style.display = "grid";
-  document.getElementById("keyBtn").onclick = () => {
-    KEY = document.getElementById("keyInput").value.trim();
-    try { localStorage.setItem("pzmap_key", KEY); } catch (e) {}
-    gate.style.display = "none"; connect();
-  };
-}
-
-function connect() {
-  const es = new EventSource(api("api/stream"));
-  es.onmessage = (e) => { setLive(true); render(JSON.parse(e.data)); };
-  es.onerror = () => { setLive(false); };
-  fetch(api("api/state")).then((r) => { if (r.status === 403) { es.close(); localStorage.removeItem("pzmap_key"); KEY = ""; showGate(); } });
-}
-
-function setLive(ok) {
-  document.getElementById("livedot").className = "dot" + (ok ? " on" : "");
-  document.getElementById("livetxt").textContent = ok ? "En vivo" : "Reconectando…";
-}
-
-function render(s) {
-  const w = s.world || {}, now = s.now;
-  const fresh = s.updated && now - s.updated < 30;
-  document.getElementById("clock").innerHTML = s.updated
-    ? `Día <b>${w.day || "?"}</b> · ${String(w.hour ?? 0).padStart(2, "0")}:${String(w.minute ?? 0).padStart(2, "0")}` +
-      (w.host ? ` · host <b>${esc(w.host)}</b>` : "") + (fresh ? "" : ` <span class="muted">· ${ago(s.updated, now)}</span>`)
-    : `<span class="muted">Sin datos de la partida</span>`;
-
-  const list = document.getElementById("players");
-  list.innerHTML = s.players.length ? "" : `<div class="empty">Esperando a que alguien juegue…</div>`;
-  const seen = new Set();
-  for (const p of s.players) {
-    seen.add(p.name);
-    const col = colorOf(p.name), hp = Math.round(p.hp ?? 100);
-    const state = p.dead ? "💀 muerto" : p.vehicle ? `🚗 ${esc(String(p.vehicle).replace(/^Base\./, ""))}` : p.z > 0 ? `piso ${p.z}` : "a pie";
-    const row = document.createElement("div");
-    row.className = "player" + (p.online ? "" : " off") + (follow === p.name ? " following" : "");
-    row.innerHTML = `<div class="avatar" style="background:${col}">${esc(p.name[0] || "?").toUpperCase()}</div>
-      <div><div><b>${esc(p.name)}</b></div>
-      <div class="sub">${p.online ? state : "desconectado · " + ago(p.seen, now)}</div>
-      <div class="hp"><i style="width:${hp}%;background:${hp < 35 ? "var(--danger)" : hp < 70 ? "var(--warn)" : "var(--accent)"}"></i></div></div>
-      <div class="sub">${follow === p.name ? "siguiendo" : Math.round(p.x) + "," + Math.round(p.y)}</div>`;
-    row.onclick = () => { follow = follow === p.name ? "" : p.name; try { localStorage.setItem("pzmap_follow", follow); } catch (e) {}
-                          map.flyTo(ll(p.x, p.y), Math.max(map.getZoom(), map.getMaxZoom() - 3)); render(s); };
-    list.appendChild(row);
-
-    const html = `<div class="marker${p.online ? "" : " off"}"><div class="pin" style="background:${col}">${p.dead ? "☠" : p.vehicle ? "🚗" : esc(p.name[0] || "?").toUpperCase()}</div><div class="label">${esc(p.name)}</div></div>`;
-    const icon = L.divIcon({ className: "", html, iconSize: [30, 30], iconAnchor: [15, 15] });
-    if (!markers[p.name]) markers[p.name] = L.marker(ll(p.x, p.y), { icon, zIndexOffset: 1000 }).addTo(map)
-      .on("click", () => { follow = p.name; map.flyTo(ll(p.x, p.y), Math.max(map.getZoom(), map.getMaxZoom() - 3)); });
-    else { markers[p.name].setLatLng(ll(p.x, p.y)); markers[p.name].setIcon(icon); }
-    markers[p.name].bindTooltip(`${esc(p.name)} · ${hp}% vida · x ${Math.round(p.x)}, y ${Math.round(p.y)}`, { direction: "top", offset: [0, -16] });
-
-    const pts = (p.trail || []).map(([x, y]) => ll(x, y));
-    if (!trails[p.name]) trails[p.name] = L.polyline(pts, { color: col, weight: 3, opacity: 0.55 });
-    else trails[p.name].setLatLngs(pts);
-    if (trailsOn) trails[p.name].addTo(map); else trails[p.name].remove();
-
-    if (follow === p.name && p.online) map.panTo(ll(p.x, p.y), { animate: true });
-  }
-  for (const n of Object.keys(markers)) if (!seen.has(n)) { markers[n].remove(); trails[n]?.remove(); delete markers[n]; delete trails[n]; }
-
-  if (!fitted && s.players.some((p) => p.online)) { fitAll(s); fitted = true; }
-  window.__last = s;
-
-  const ev = document.getElementById("events");
-  ev.innerHTML = s.events.length ? s.events.map((e) =>
-    `<div class="ev ${e.kind}"><time>${new Date(e.t * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time>${esc(e.text)}</div>`).join("")
-    : `<div class="empty">Sin actividad todavía.</div>`;
-}
-
-function fitAll(s) {
-  const pts = (s || window.__last || { players: [] }).players.filter((p) => p.online).map((p) => ll(p.x, p.y));
-  if (pts.length === 1) map.flyTo(pts[0], Math.max(map.getZoom(), map.getMaxZoom() - 3)); else if (pts.length) map.flyToBounds(L.latLngBounds(pts).pad(0.4), { maxZoom: map.getMaxZoom() - 3 });
-}
-
-document.getElementById("btnFit").onclick = () => { follow = ""; fitAll(); };
-document.getElementById("btnTrails").onclick = (e) => {
-  trailsOn = !trailsOn; e.target.classList.toggle("on", trailsOn);
-  for (const t of Object.values(trails)) trailsOn ? t.addTo(map) : t.remove();
-};
-map.on("mousemove", (e) => { const [x, y] = unll(e.latlng); document.getElementById("coords").textContent = `x ${Math.round(x)}, y ${Math.round(y)} · celda ${Math.floor(x / 300)},${Math.floor(y / 300)}`; });
-map.on("dragstart", () => { follow = ""; });
 boot();
 </script>
 </body>

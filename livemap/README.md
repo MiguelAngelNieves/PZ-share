@@ -7,6 +7,19 @@ Mapa web en vivo de la partida: dónde está cada jugador, su vida, si va en veh
 Juego (mod PZLiveMap) ──► Zomboid/Lua/pzlivemap.json ──► PZ Share (PC del host) ──► Pi /api/update ──► navegadores (en vivo)
 ```
 
+## Qué trae
+
+- **Mapa** con niebla de guerra (solo se ve lo que han explorado; botón «Mapa completo»), recorridos suaves
+  (solo el de quien sigues, o todos con el botón de ruta), marcas compartidas (base, loot, peligro, carro).
+- **Ping**: tocas el mapa y en el juego aparece «Miguel marcó un punto: 140 m al NE» sobre tu personaje.
+- **Grupo**: vida, estados del juego (hambre, sed, pánico…), heridas por zona, arma, carga, vehículo y gasolina.
+  Nunca la infección: el personaje no la conoce.
+- **Tareas** compartidas, **álbum** con las capturas de Steam (F12) clavadas donde las sacaste,
+  **logros**, récords, bitácora y **timelapse** de toda la campaña.
+- Opcional: avisos en Discord (quién abrió la partida, muertes, resumen de la sesión) con `PZMAP_DISCORD_WEBHOOK`.
+
+Diseño: `DESIGN.md`. La lógica vive en `pzcore.py` (también la usa el modo «en este PC» de PZ Share).
+
 ## Instalar en la Pi
 
 ```bash
@@ -46,10 +59,12 @@ Para el modo «en este PC» de PZ Share, elige la carpeta de salida en **🗺 Ma
 | `PZMAP_TOKEN` | Obligatorio. Lo usa PZ Share para enviar posiciones |
 | `PZMAP_VIEW_KEY` | Llave para ver (`?k=`). Vacía = cualquiera con el link |
 | `PZMAP_TITLE` | Título de la página |
+| `PZMAP_DISCORD_WEBHOOK` | Opcional: URL de un webhook de Discord para los avisos |
 | `PZMAP_TILES` | Opcional: plantilla de tiles Leaflet si tienes un mapa en tiles |
 | `PZMAP_IMAGE_BOUNDS` | Opcional: si pones `data/map.png`, sus límites en tiles del juego `x0,y0,x1,y1` |
 
 Sin tiles, el mapa usa una cuadrícula de celdas (300 tiles) con los pueblos. Los pueblos están en
 `static/towns.json` (coordenadas aproximadas); puedes poner los tuyos en `data/towns.json`.
 
-El estado vive en memoria y se guarda en `data/state.json` cada 3 minutos (pocas escrituras para la microSD).
+El estado vive en memoria y se guarda cada 3 minutos en `data/` (`state.json`, `explored.json`, `history.jsonl`,
+`photos/`): pocas escrituras para la microSD.
