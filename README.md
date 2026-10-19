@@ -60,5 +60,7 @@ Una web con la posición de cada jugador en tiempo real (vida, vehículo, rastro
 - PZ Share lo lee mientras el juego está abierto y lo envía al servidor del mapa.
 - `livemap/`: el servidor del mapa (FastAPI + Leaflet, Docker), pensado para una Raspberry Pi. Ver `livemap/README.md`.
 
-En PZ Share: **🗺 Mapa en vivo** → dirección, token → **Instalar el mod en la partida** → **⤒ Subir partida**.
+**Sin Pi:** activa el interruptor **Mapa en vivo en este PC** y se abre en `http://127.0.0.1:8765` (solo para ti, casi sin consumo).
+
+**Con Pi (para que lo vean tus amigos):** en PZ Share: **🗺 Mapa en vivo** → dirección, token → **Instalar el mod en la partida** → **⤒ Subir partida**.
 El mod va dentro de la partida (`mods/`), así que a tus amigos les llega solo.

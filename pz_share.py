@@ -19,6 +19,7 @@ import urllib.parse
 import urllib.error
 import urllib.request
 import webbrowser
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from tkinter import filedialog, messagebox
 
@@ -583,6 +584,136 @@ def install_livemap(folder: Path):
     return activated
 
 
+LOCAL_MAP_PORT = 8765
+
+
+class LocalMap:
+    """Mapa en vivo dentro de PZ Share: un servidor web mínimo en este PC (sin Pi, sin Docker).
+    Solo corre si lo activas y casi no gasta nada: un hilo dormido y el estado en memoria."""
+    ONLINE_SECS, TRAIL_MAX, TRAIL_STEP = 25, 600, 4.0
+
+    def __init__(self):
+        self.state = {"world": {}, "players": {}, "events": [], "updated": 0}
+        self.cond = threading.Condition()
+        self.version = 0
+        self.httpd = None
+
+    @property
+    def running(self):
+        return self.httpd is not None
+
+    @property
+    def url(self):
+        return f"http://127.0.0.1:{LOCAL_MAP_PORT}/"
+
+    # — estado (misma lógica que el servidor de la Pi) —
+    def event(self, text, kind="info"):
+        self.state["events"].insert(0, {"t": time.time(), "text": text, "kind": kind})
+        del self.state["events"][60:]
+
+    def update(self, body):
+        now = time.time()
+        st = self.state
+        w = body.get("world") or {}
+        st["world"] = {"day": w.get("day"), "hour": w.get("hour"), "minute": w.get("minute"),
+                       "host": body.get("host", "")}
+        for raw in (body.get("players") or [])[:32]:
+            name = str(raw.get("name", "")).strip()[:40]
+            if not name:
+                continue
+            pl = st["players"].get(name)
+            if pl is None or now - pl.get("seen", 0) > self.ONLINE_SECS:
+                self.event(f"{name} se conectó", "join")
+            pl = st["players"].setdefault(name, {"trail": []})
+            if raw.get("dead") and not pl.get("dead"):
+                self.event(f"💀 {name} murió", "death")
+            if raw.get("vehicle") and not pl.get("vehicle"):
+                self.event(f"🚗 {name} se subió a un vehículo")
+            x, y = float(raw.get("x") or 0), float(raw.get("y") or 0)
+            tr = pl["trail"]
+            if not tr or abs(tr[-1][0] - x) + abs(tr[-1][1] - y) >= self.TRAIL_STEP:
+                tr.append([round(x, 1), round(y, 1), int(now)])
+                del tr[:-self.TRAIL_MAX]
+            pl.update(x=x, y=y, z=int(raw.get("z") or 0), hp=float(raw.get("hp") or 100),
+                      dead=bool(raw.get("dead")), vehicle=raw.get("vehicle"), seen=now)
+        st["updated"] = now
+        self.bump()
+
+    def bump(self):
+        with self.cond:
+            self.version += 1
+            self.cond.notify_all()
+
+    def public(self):
+        now = time.time()
+        players = [{**{k: v for k, v in p.items()}, "name": n, "online": now - p.get("seen", 0) < self.ONLINE_SECS}
+                   for n, p in self.state["players"].items()]
+        players.sort(key=lambda p: (not p["online"], p["name"].lower()))
+        return {"world": self.state["world"], "players": players, "events": self.state["events"][:30],
+                "updated": self.state["updated"], "now": now}
+
+    # — servidor —
+    def start(self):
+        if self.httpd:
+            return
+        local = self
+        static = resource("livemap", "static")
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *a):  # silencio
+                pass
+
+            def send(self, code, body, ctype="application/json; charset=utf-8"):
+                data = body if isinstance(body, bytes) else body.encode("utf-8")
+                self.send_response(code)
+                self.send_header("Content-Type", ctype)
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            def do_GET(self):
+                path = urllib.parse.urlparse(self.path).path
+                if path in ("/", "/index.html"):
+                    return self.send(200, (static / "index.html").read_bytes(), "text/html; charset=utf-8")
+                if path == "/towns.json":
+                    return self.send(200, (static / "towns.json").read_bytes())
+                if path == "/config.json":
+                    return self.send(200, json.dumps({"tiles": "", "image": False, "image_bounds": None,
+                                                      "title": "Mapa en vivo · este PC", "need_key": False}))
+                if path == "/api/state":
+                    return self.send(200, json.dumps(local.public(), ensure_ascii=False))
+                if path == "/api/stream":
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/event-stream")
+                    self.send_header("Cache-Control", "no-cache")
+                    self.end_headers()
+                    seen = -1
+                    try:
+                        while local.httpd:
+                            with local.cond:
+                                if local.version == seen:
+                                    local.cond.wait(timeout=15)
+                                changed = local.version != seen
+                                seen = local.version
+                            msg = f"data: {json.dumps(local.public(), ensure_ascii=False)}\n\n" if changed else ": ping\n\n"
+                            self.wfile.write(msg.encode("utf-8"))
+                            self.wfile.flush()
+                    except (BrokenPipeError, ConnectionResetError, OSError):
+                        pass
+                    return
+                self.send(404, "{}")
+
+        self.httpd = ThreadingHTTPServer(("127.0.0.1", LOCAL_MAP_PORT), Handler)
+        self.httpd.daemon_threads = True
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+
+    def stop(self):
+        if self.httpd:
+            h, self.httpd = self.httpd, None
+            self.bump()
+            threading.Thread(target=h.shutdown, daemon=True).start()
+
+
 class LiveRelay(threading.Thread):
     """Mientras el juego está abierto, manda al mapa en vivo lo que escribe el mod."""
 
@@ -619,8 +750,10 @@ class LiveRelay(threading.Thread):
         while True:
             time.sleep(3)
             repo, cfg = self.config()
-            if not repo or not cfg.get("url") or not cfg.get("token"):
-                self.status = "sin configurar"
+            local = self.app.localmap
+            to_pi = bool(cfg.get("url") and cfg.get("token"))
+            if not repo or (not to_pi and not local.running):
+                self.status = "apagado"
                 continue
             if not game_running():
                 self.status = "esperando a que abras el juego"
@@ -634,20 +767,30 @@ class LiveRelay(threading.Thread):
                 continue
             try:
                 data = json.loads(f.read_text(encoding="utf-8", errors="replace"))
-                data["host"] = repo.player
+            except (OSError, ValueError):
+                continue  # el juego lo está escribiendo justo ahora; se lee en la próxima vuelta
+            data["host"] = repo.player
+            self.last_mtime = mtime
+            n = len(data.get("players", []))
+            if local.running:
+                local.update(data)
+                self.last_ok = time.time()
+                self.status = f"en vivo en este PC · {n} jugadores"
+            if not to_pi:
+                continue
+            try:
                 req = urllib.request.Request(
                     cfg["url"].rstrip("/") + "/api/update", data=json.dumps(data).encode("utf-8"),
                     headers={"Authorization": f"Bearer {cfg['token']}", "Content-Type": "application/json",
                              "User-Agent": "PZShare"})
                 urllib.request.urlopen(req, timeout=8).read()
-                self.last_mtime = mtime
                 self.sent += 1
                 self.last_ok = time.time()
-                self.status = f"en vivo · {len(data.get('players', []))} jugadores"
+                self.status = f"en vivo{' (PC y Pi)' if local.running else ''} · {n} jugadores"
             except urllib.error.HTTPError as e:
                 self.status = "token inválido" if e.code == 401 else f"error {e.code} del mapa"
             except Exception as e:  # noqa: BLE001
-                self.status = f"sin conexión con el mapa ({type(e).__name__})"
+                self.status = f"sin conexión con la Pi ({type(e).__name__})"
 
 
 # ───────────────────────── UI helpers ─────────────────────────
@@ -672,14 +815,20 @@ class App(ctk.CTk):
         super().__init__()
         ctk.set_appearance_mode("dark")
         self.title(APP_NAME)
-        self.geometry("460x800")
-        self.minsize(420, 720)
+        self.geometry("460x860")
+        self.minsize(420, 760)
         self.configure(fg_color=C["bg"])
         self.cfg = load_config()
         self.busy = False
         self.playing = False
         self.view = None
         self.protocol("WM_DELETE_WINDOW", self.on_close)
+        self.localmap = LocalMap()
+        if self.cfg.get("localmap"):
+            try:
+                self.localmap.start()
+            except OSError:
+                pass
         self.relay = LiveRelay(self)
         self.relay.start()
         if self.cfg.get("folder") and (Path(self.cfg["folder"]) / ".git").exists():
@@ -926,6 +1075,23 @@ class MainView(ctk.CTkFrame):
         self.mods_btn.grid(row=2, column=0, sticky="ew", padx=(0, 5), pady=(10, 0))
         self.map_btn = ghost_button(row, "🗺  Mapa en vivo", self.show_livemap)
         self.map_btn.grid(row=2, column=1, sticky="ew", padx=(5, 0), pady=(10, 0))
+
+        # Interruptor del mapa local
+        sw = card(self)
+        sw.pack(fill="x", pady=(12, 0))
+        self.map_switch = ctk.CTkSwitch(sw, text="Mapa en vivo en este PC", font=font(13, "bold"),
+                                        text_color=C["text"], progress_color=C["accent"],
+                                        command=self.toggle_localmap)
+        sw.grid_columnconfigure(0, weight=1)
+        self.map_switch.grid(row=0, column=0, sticky="w", padx=14, pady=(10, 0))
+        if app.localmap.running:
+            self.map_switch.select()
+        self.map_open = ctk.CTkButton(sw, text="Abrir", width=70, height=28, corner_radius=8, font=font(12),
+                                      fg_color=C["card2"], hover_color=C["border"], text_color=C["accent"],
+                                      command=lambda: webbrowser.open(app.localmap.url))
+        self.map_state = ctk.CTkLabel(sw, text="", font=font(11), text_color=C["muted"], anchor="w")
+        self.map_state.grid(row=1, column=0, columnspan=2, sticky="w", padx=14, pady=(0, 8))
+        self.refresh_map_switch()
         self.release_btn = ctk.CTkButton(row, text="Liberar partida (quedó marcada como mía)", height=34,
                                          corner_radius=10, fg_color="transparent", border_width=1,
                                          border_color=C["danger"], text_color=C["danger"],
@@ -1008,6 +1174,37 @@ class MainView(ctk.CTkFrame):
 
     def show_livemap(self):
         LiveMapDialog(self)
+
+    def toggle_localmap(self):
+        lm = self.app.localmap
+        if self.map_switch.get():
+            try:
+                lm.start()
+            except OSError as e:
+                self.map_switch.deselect()
+                return messagebox.showerror(APP_NAME, f"No pude abrir el mapa en el puerto {LOCAL_MAP_PORT}: {e}",
+                                            parent=self)
+            if not livemap_installed(self.app.repo.folder):
+                messagebox.showinfo(APP_NAME, "Falta el mod del mapa en la partida. Ve a «🗺 Mapa en vivo» → "
+                                    "«Instalar el mod en la partida».", parent=self)
+            webbrowser.open(lm.url)
+        else:
+            lm.stop()
+        self.app.cfg["localmap"] = bool(self.map_switch.get())
+        save_config(self.app.cfg)
+        self.refresh_map_switch()
+
+    def refresh_map_switch(self):
+        if not self.winfo_exists():
+            return
+        lm, relay = self.app.localmap, self.app.relay
+        if lm.running:
+            self.map_open.grid(row=0, column=1, padx=(0, 12), pady=(10, 0))
+            self.map_state.configure(text=relay.status)
+        else:
+            self.map_open.grid_forget()
+            self.map_state.configure(text="apagado · 0 recursos")
+        self.after(3000, self.refresh_map_switch)
 
     def show_history(self):
         self.render_history()
