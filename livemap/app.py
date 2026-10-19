@@ -14,6 +14,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 
 WRITE_TOKEN = os.environ.get("PZMAP_TOKEN", "")
 VIEW_KEY = os.environ.get("PZMAP_VIEW_KEY", "")  # vacío = cualquiera con el link puede ver
@@ -185,11 +186,23 @@ async def towns():
     return FileResponse(custom if custom.exists() else STATIC / "towns.json")
 
 
+def find_dzi():
+    """Mapa renderizado con pzmap2dzi: data/tiles/<algo>/layer0.dzi + map_info.json (vista superior)."""
+    custom = os.environ.get("PZMAP_DZI", "").strip("/")
+    if custom:
+        return custom + "/"
+    tiles = DATA / "tiles"
+    for cand in ("base_top", "map_data/base_top", "html/map_data/base_top"):
+        if (tiles / cand / "layer0.dzi").exists() and (tiles / cand / "map_info.json").exists():
+            return f"tiles/{cand}/"
+    return ""
+
+
 @app.get("/config.json")
 async def config():
     img = DATA / "map.png"
     bounds = os.environ.get("PZMAP_IMAGE_BOUNDS", "")
-    return {"tiles": os.environ.get("PZMAP_TILES", ""), "image": img.exists(),
+    return {"dzi": find_dzi(), "tiles": os.environ.get("PZMAP_TILES", ""), "image": img.exists(),
             "image_bounds": [num(v) for v in bounds.split(",")] if bounds.count(",") == 3 else None,
             "title": os.environ.get("PZMAP_TITLE", "PZ Live Map"), "need_key": bool(VIEW_KEY)}
 
@@ -205,6 +218,10 @@ async def map_png():
 @app.get("/")
 async def index():
     return FileResponse(STATIC / "index.html")
+
+
+(DATA / "tiles").mkdir(parents=True, exist_ok=True)
+app.mount("/tiles", StaticFiles(directory=DATA / "tiles"), name="tiles")
 
 
 # ───────────────────────── tareas ─────────────────────────

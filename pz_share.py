@@ -597,6 +597,18 @@ class LocalMap:
         self.cond = threading.Condition()
         self.version = 0
         self.httpd = None
+        self.tiles_dir = None  # carpeta base_top renderizada con pzmap2dzi (opcional)
+
+    @staticmethod
+    def find_dzi(folder):
+        """Acepta la carpeta de salida de pzmap2dzi, su html/, map_data/ o base_top/ directamente."""
+        if not folder:
+            return None
+        base = Path(folder)
+        for cand in (base, base / "base_top", base / "map_data" / "base_top", base / "html" / "map_data" / "base_top"):
+            if (cand / "layer0.dzi").exists() and (cand / "map_info.json").exists():
+                return cand
+        return None
 
     @property
     def running(self):
@@ -678,8 +690,17 @@ class LocalMap:
                 if path == "/towns.json":
                     return self.send(200, (static / "towns.json").read_bytes())
                 if path == "/config.json":
-                    return self.send(200, json.dumps({"tiles": "", "image": False, "image_bounds": None,
+                    return self.send(200, json.dumps({"dzi": "tiles/" if local.tiles_dir else "", "tiles": "",
+                                                      "image": False, "image_bounds": None,
                                                       "title": "Mapa en vivo · este PC", "need_key": False}))
+                if path.startswith("/tiles/") and local.tiles_dir:
+                    rel = urllib.parse.unquote(path[len("/tiles/"):])
+                    f = (local.tiles_dir / rel).resolve()
+                    if local.tiles_dir.resolve() in f.parents and f.is_file():
+                        ctype = {".jpg": "image/jpeg", ".png": "image/png", ".webp": "image/webp",
+                                 ".json": "application/json", ".dzi": "application/xml"}.get(f.suffix, "application/octet-stream")
+                        return self.send(200, f.read_bytes(), ctype)
+                    return self.send(404, "{}")
                 if path == "/api/state":
                     return self.send(200, json.dumps(local.public(), ensure_ascii=False))
                 if path == "/api/stream":
@@ -824,6 +845,7 @@ class App(ctk.CTk):
         self.view = None
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         self.localmap = LocalMap()
+        self.localmap.tiles_dir = LocalMap.find_dzi(self.cfg.get("map_tiles"))
         if self.cfg.get("localmap"):
             try:
                 self.localmap.start()
@@ -1736,7 +1758,7 @@ class LiveMapDialog(ctk.CTkToplevel):
         self.repo = main.app.repo
         cfg = self.repo.group().get("livemap") or {}
         self.title("Mapa en vivo")
-        self.geometry("460x560")
+        self.geometry("460x660")
         self.resizable(False, False)
         self.configure(fg_color=C["bg"])
         self.transient(main.app)
@@ -1759,7 +1781,17 @@ class LiveMapDialog(ctk.CTkToplevel):
         self.token = self.field(form, "Token para enviar", "el PZMAP_TOKEN de la Pi", cfg.get("token", ""))
         self.view = self.field(form, "Llave para ver (opcional)", "el PZMAP_VIEW_KEY, si pusiste uno",
                                cfg.get("view", ""))
-        ctk.CTkFrame(form, fg_color="transparent", height=6).pack()
+        ctk.CTkLabel(form, text="Mapa del juego renderizado (para «en este PC», opcional)", font=font(12, "bold"),
+                     text_color=C["muted"]).pack(anchor="w", padx=14, pady=(10, 4))
+        trow = ctk.CTkFrame(form, fg_color="transparent")
+        trow.pack(fill="x", padx=14)
+        self.tiles = ctk.CTkEntry(trow, height=34, corner_radius=8, font=font(12),
+                                  placeholder_text="carpeta de salida de pzmap2dzi", border_color=C["border"])
+        self.tiles.pack(side="left", fill="x", expand=True)
+        if main.app.cfg.get("map_tiles"):
+            self.tiles.insert(0, main.app.cfg["map_tiles"])
+        ghost_button(trow, "Elegir…", self.pick_tiles, width=80).pack(side="left", padx=(8, 0))
+        ctk.CTkFrame(form, fg_color="transparent", height=8).pack()
 
         row = ctk.CTkFrame(self, fg_color="transparent")
         row.pack(fill="x", padx=20, pady=(14, 0))
@@ -1798,7 +1830,21 @@ class LiveMapDialog(ctk.CTkToplevel):
             self.mod_lbl.configure(text="⚠ Falta instalar el mod en la partida", text_color=C["warn"])
         self.after(2000, self.refresh)
 
+    def pick_tiles(self):
+        d = filedialog.askdirectory(parent=self, title="Carpeta de salida de pzmap2dzi")
+        if d:
+            self.tiles.delete(0, "end")
+            self.tiles.insert(0, str(Path(d)))
+
     def save(self, quiet=False):
+        tiles = self.tiles.get().strip()
+        found = LocalMap.find_dzi(tiles)
+        if tiles and not found:
+            return messagebox.showwarning(APP_NAME, "En esa carpeta no encontré base_top/layer0.dzi. Elige la carpeta "
+                                          "de salida de pzmap2dzi (la que tiene html/map_data).", parent=self)
+        self.main.app.cfg["map_tiles"] = tiles
+        save_config(self.main.app.cfg)
+        self.main.app.localmap.tiles_dir = found
         url = self.url.get().strip()
         if url and not url.startswith(("http://", "https://")):
             return messagebox.showwarning(APP_NAME, "La dirección debe empezar por https://", parent=self)

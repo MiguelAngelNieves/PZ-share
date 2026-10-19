@@ -108,11 +108,37 @@ let KEY = params.get("k") || localStorage.getItem("pzmap_key") || "";
 const api = (p) => BASE + p + (KEY ? (p.includes("?") ? "&" : "?") + "k=" + encodeURIComponent(KEY) : "");
 
 const WORLD = { w: 20000, h: 16000 };
-const ll = (x, y) => L.latLng(-y, x);
+// Coordenadas del juego (x, y en cuadros) -> mapa. Con el mapa renderizado (DZI) la unidad es el
+// píxel de la imagen: px = x0 + x * sqr (datos de map_info.json de pzmap2dzi).
+const P = { x0: 0, y0: 0, sqr: 1 };
+const ll = (x, y) => L.latLng(-(P.y0 + y * P.sqr), P.x0 + x * P.sqr);
+const unll = (latlng) => [(latlng.lng - P.x0) / P.sqr, (-latlng.lat - P.y0) / P.sqr];
 const map = L.map("map", { crs: L.CRS.Simple, minZoom: -6, maxZoom: 3, zoomSnap: 0.25,
                            attributionControl: false, zoomControl: false });
 L.control.zoom({ position: "bottomright" }).addTo(map);
-map.fitBounds([ll(0, 0), ll(WORLD.w, WORLD.h)]);
+
+// Capa de teselas Deep Zoom (salida de pzmap2dzi, vista superior como el mapa del juego)
+async function addDzi(root) {
+  const [info, xml] = await Promise.all([
+    fetch(root + "map_info.json").then((r) => r.json()),
+    fetch(root + "layer0.dzi").then((r) => r.text())]);
+  const doc = new DOMParser().parseFromString(xml, "application/xml");
+  const img = doc.querySelector("Image"), size = doc.querySelector("Size");
+  const W = +size.getAttribute("Width"), H = +size.getAttribute("Height");
+  const ts = +img.getAttribute("TileSize"), fmt = img.getAttribute("Format");
+  const maxLevel = Math.ceil(Math.log2(Math.max(W, H)));
+  Object.assign(P, { x0: +info.x0 || 0, y0: +info.y0 || 0, sqr: +info.sqr || 1 });
+  const minZ = -(maxLevel - 8);
+  const Dzi = L.TileLayer.extend({
+    getTileUrl(c) { return `${root}layer0_files/${maxLevel + c.z}/${c.x}_${c.y}.${fmt}`; }
+  });
+  const bounds = L.latLngBounds([L.latLng(0, 0), L.latLng(-H, W)]);
+  new Dzi("", { tileSize: ts, noWrap: true, bounds, minZoom: minZ, maxZoom: 4, minNativeZoom: minZ,
+                maxNativeZoom: 0, keepBuffer: 1, updateWhenIdle: true }).addTo(map);
+  map.setMinZoom(minZ); map.setMaxZoom(4); map.setMaxBounds(bounds.pad(0.25));
+  map.fitBounds(bounds);
+  document.getElementById("map").style.background = "#1b1f1d";
+}
 
 // Cuadrícula: celdas de 300 tiles, como el mapa del juego
 const Grid = L.GridLayer.extend({
@@ -152,13 +178,18 @@ async function boot() {
   const cfg = await fetch(BASE + "config.json").then((r) => r.json()).catch(() => ({}));
   document.title = cfg.title || "PZ Live Map";
   document.getElementById("title").textContent = cfg.title || "PZ Live Map";
-  if (cfg.tiles) L.tileLayer(cfg.tiles, { noWrap: true, minZoom: -6, maxZoom: 3 }).addTo(map);
-  else new Grid({ tileSize: 256, noWrap: true }).addTo(map);
+  let hasDzi = false;
+  if (cfg.dzi) { try { await addDzi(BASE + cfg.dzi); hasDzi = true; } catch (e) { console.warn("DZI", e); } }
+  if (!hasDzi) {
+    map.fitBounds([ll(0, 0), ll(WORLD.w, WORLD.h)]);
+    if (cfg.tiles) L.tileLayer(cfg.tiles, { noWrap: true, minZoom: -6, maxZoom: 3 }).addTo(map);
+    else new Grid({ tileSize: 256, noWrap: true }).addTo(map);
+  }
   if (cfg.image && cfg.image_bounds) {
     const [x0, y0, x1, y1] = cfg.image_bounds;
     L.imageOverlay(BASE + "map.png", [ll(x0, y0), ll(x1, y1)], { opacity: 0.9 }).addTo(map);
   }
-  const towns = await fetch(BASE + "towns.json").then((r) => r.json()).catch(() => []);
+  const towns = hasDzi && !cfg.towns_on_map ? [] : await fetch(BASE + "towns.json").then((r) => r.json()).catch(() => []);
   for (const t of towns)
     L.marker(ll(t.x, t.y), { interactive: false, icon: L.divIcon({ className: "", html: `<div class="town">${esc(t.name)}</div>` }) }).addTo(map);
   if (cfg.need_key && !KEY) return showGate();
@@ -209,13 +240,13 @@ function render(s) {
       <div class="hp"><i style="width:${hp}%;background:${hp < 35 ? "var(--danger)" : hp < 70 ? "var(--warn)" : "var(--accent)"}"></i></div></div>
       <div class="sub">${follow === p.name ? "siguiendo" : Math.round(p.x) + "," + Math.round(p.y)}</div>`;
     row.onclick = () => { follow = follow === p.name ? "" : p.name; try { localStorage.setItem("pzmap_follow", follow); } catch (e) {}
-                          map.flyTo(ll(p.x, p.y), Math.max(map.getZoom(), 0)); render(s); };
+                          map.flyTo(ll(p.x, p.y), Math.max(map.getZoom(), map.getMaxZoom() - 3)); render(s); };
     list.appendChild(row);
 
     const html = `<div class="marker${p.online ? "" : " off"}"><div class="pin" style="background:${col}">${p.dead ? "☠" : p.vehicle ? "🚗" : esc(p.name[0] || "?").toUpperCase()}</div><div class="label">${esc(p.name)}</div></div>`;
     const icon = L.divIcon({ className: "", html, iconSize: [30, 30], iconAnchor: [15, 15] });
     if (!markers[p.name]) markers[p.name] = L.marker(ll(p.x, p.y), { icon, zIndexOffset: 1000 }).addTo(map)
-      .on("click", () => { follow = p.name; map.flyTo(ll(p.x, p.y), Math.max(map.getZoom(), 0)); });
+      .on("click", () => { follow = p.name; map.flyTo(ll(p.x, p.y), Math.max(map.getZoom(), map.getMaxZoom() - 3)); });
     else { markers[p.name].setLatLng(ll(p.x, p.y)); markers[p.name].setIcon(icon); }
     markers[p.name].bindTooltip(`${esc(p.name)} · ${hp}% vida · x ${Math.round(p.x)}, y ${Math.round(p.y)}`, { direction: "top", offset: [0, -16] });
 
@@ -239,7 +270,7 @@ function render(s) {
 
 function fitAll(s) {
   const pts = (s || window.__last || { players: [] }).players.filter((p) => p.online).map((p) => ll(p.x, p.y));
-  if (pts.length === 1) map.flyTo(pts[0], 0); else if (pts.length) map.flyToBounds(L.latLngBounds(pts).pad(0.4), { maxZoom: 0 });
+  if (pts.length === 1) map.flyTo(pts[0], Math.max(map.getZoom(), map.getMaxZoom() - 3)); else if (pts.length) map.flyToBounds(L.latLngBounds(pts).pad(0.4), { maxZoom: map.getMaxZoom() - 3 });
 }
 
 document.getElementById("btnFit").onclick = () => { follow = ""; fitAll(); };
@@ -247,7 +278,7 @@ document.getElementById("btnTrails").onclick = (e) => {
   trailsOn = !trailsOn; e.target.classList.toggle("on", trailsOn);
   for (const t of Object.values(trails)) trailsOn ? t.addTo(map) : t.remove();
 };
-map.on("mousemove", (e) => { document.getElementById("coords").textContent = `x ${Math.round(e.latlng.lng)}, y ${Math.round(-e.latlng.lat)} · celda ${Math.floor(e.latlng.lng / 300)},${Math.floor(-e.latlng.lat / 300)}`; });
+map.on("mousemove", (e) => { const [x, y] = unll(e.latlng); document.getElementById("coords").textContent = `x ${Math.round(x)}, y ${Math.round(y)} · celda ${Math.floor(x / 300)},${Math.floor(y / 300)}`; });
 map.on("dragstart", () => { follow = ""; });
 boot();
 </script>

@@ -23,6 +23,22 @@ sudo tailscale funnel --bg --set-path /pzmap http://127.0.0.1:8095   # o "serve"
 PZ Share → **🗺 Mapa en vivo**: pega la dirección (`https://<tu-pi>.ts.net/pzmap/`), el token y la llave →
 **Instalar el mod en la partida** → **⤒ Subir partida**. El mod y los ajustes viajan con la partida.
 
+## Mapa real del juego (como el mapa dentro del juego)
+
+El mapa se genera una vez desde los archivos del juego con [pzmap2dzi](https://github.com/cff29546/pzmap2dzi) (MIT),
+en vista superior y con colores tipo mapa del juego.
+
+1. En Windows, doble clic a `renderizar_mapa.bat` (revisa arriba la ruta del juego y la de salida).
+   Descarga pzmap2dzi, lo configura y renderiza solo la vista superior. Tarda unas horas la primera vez.
+2. Pásalo a la Pi:
+   ```bash
+   scp D:\pzmap_render\base_top.zip arcangel@<ip-de-la-pi>:~/pzmap/data/
+   ssh arcangel@<ip-de-la-pi> "cd ~/pzmap/data && mkdir -p tiles && unzip -oq base_top.zip -d tiles && rm base_top.zip"
+   ```
+3. Recarga la página: el mapa detecta `data/tiles/base_top` solo y pone a los jugadores encima.
+
+Para el modo «en este PC» de PZ Share, elige la carpeta de salida en **🗺 Mapa en vivo**.
+
 ## Ajustes (`.env`)
 
 | Variable | Para qué |
