@@ -605,7 +605,8 @@ class LocalMap:
         if not folder:
             return None
         base = Path(folder)
-        for cand in (base, base / "base_top", base / "map_data" / "base_top", base / "html" / "map_data" / "base_top"):
+        for cand in (base, base / "base", base / "map_data" / "base", base / "html" / "map_data" / "base",
+                     base / "base_top", base / "map_data" / "base_top", base / "html" / "map_data" / "base_top"):
             if (cand / "layer0.dzi").exists() and (cand / "map_info.json").exists():
                 return cand
         return None
@@ -1840,7 +1841,7 @@ class LiveMapDialog(ctk.CTkToplevel):
         tiles = self.tiles.get().strip()
         found = LocalMap.find_dzi(tiles)
         if tiles and not found:
-            return messagebox.showwarning(APP_NAME, "En esa carpeta no encontré base_top/layer0.dzi. Elige la carpeta "
+            return messagebox.showwarning(APP_NAME, "En esa carpeta no encontré base/ ni base_top/layer0.dzi. Elige la carpeta "
                                           "de salida de pzmap2dzi (la que tiene html/map_data).", parent=self)
         self.main.app.cfg["map_tiles"] = tiles
         save_config(self.main.app.cfg)

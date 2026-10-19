@@ -192,7 +192,8 @@ def find_dzi():
     if custom:
         return custom + "/"
     tiles = DATA / "tiles"
-    for cand in ("base_top", "map_data/base_top", "html/map_data/base_top"):
+    # primero la isométrica (más detalle), luego la vista superior
+    for cand in ("base", "map_data/base", "html/map_data/base", "base_top", "map_data/base_top", "html/map_data/base_top"):
         if (tiles / cand / "layer0.dzi").exists() and (tiles / cand / "map_info.json").exists():
             return f"tiles/{cand}/"
     return ""

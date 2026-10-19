@@ -110,9 +110,18 @@ const api = (p) => BASE + p + (KEY ? (p.includes("?") ? "&" : "?") + "k=" + enco
 const WORLD = { w: 20000, h: 16000 };
 // Coordenadas del juego (x, y en cuadros) -> mapa. Con el mapa renderizado (DZI) la unidad es el
 // píxel de la imagen: px = x0 + x * sqr (datos de map_info.json de pzmap2dzi).
-const P = { x0: 0, y0: 0, sqr: 1 };
-const ll = (x, y) => L.latLng(-(P.y0 + y * P.sqr), P.x0 + x * P.sqr);
-const unll = (latlng) => [(latlng.lng - P.x0) / P.sqr, (-latlng.lat - P.y0) / P.sqr];
+// Vista isométrica (como projectzomboidmap.com): px = x0 + (x-y)*sqr/2, py = y0 + (x+y)*sqr/4.
+// "skip" = niveles omitidos al renderizar: la imagen es 2^skip veces más pequeña.
+const P = { x0: 0, y0: 0, sqr: 1, iso: false, scale: 1 };
+const ll = (x, y) => P.iso
+  ? L.latLng(-(P.y0 + (x + y) * P.sqr / 4) / P.scale, (P.x0 + (x - y) * P.sqr / 2) / P.scale)
+  : L.latLng(-(P.y0 + y * P.sqr) / P.scale, (P.x0 + x * P.sqr) / P.scale);
+const unll = (latlng) => {
+  const px = latlng.lng * P.scale - P.x0, py = -latlng.lat * P.scale - P.y0;
+  if (!P.iso) return [px / P.sqr, py / P.sqr];
+  const a = px / (P.sqr / 2), b = py / (P.sqr / 4);   // a = x - y, b = x + y
+  return [(a + b) / 2, (b - a) / 2];
+};
 const map = L.map("map", { crs: L.CRS.Simple, minZoom: -6, maxZoom: 3, zoomSnap: 0.25,
                            attributionControl: false, zoomControl: false });
 L.control.zoom({ position: "bottomright" }).addTo(map);
@@ -127,15 +136,18 @@ async function addDzi(root) {
   const W = +size.getAttribute("Width"), H = +size.getAttribute("Height");
   const ts = +img.getAttribute("TileSize"), fmt = img.getAttribute("Format");
   const maxLevel = Math.ceil(Math.log2(Math.max(W, H)));
-  Object.assign(P, { x0: +info.x0 || 0, y0: +info.y0 || 0, sqr: +info.sqr || 1 });
+  const sqr = +info.sqr || 1;
+  Object.assign(P, { x0: +info.x0 || 0, y0: +info.y0 || 0, sqr, iso: sqr >= 64, scale: 2 ** (+info.skip || 0) });
+  // Acercar más allá de la resolución real solo pixela: vista superior hasta ~16 px por cuadro, isométrica x2.
+  const maxZ = P.iso ? 1 : Math.max(1, Math.min(4, Math.round(Math.log2(16 * P.scale / sqr))));
   const minZ = -(maxLevel - 8);
   const Dzi = L.TileLayer.extend({
     getTileUrl(c) { return `${root}layer0_files/${maxLevel + c.z}/${c.x}_${c.y}.${fmt}`; }
   });
   const bounds = L.latLngBounds([L.latLng(0, 0), L.latLng(-H, W)]);
-  new Dzi("", { tileSize: ts, noWrap: true, bounds, minZoom: minZ, maxZoom: 4, minNativeZoom: minZ,
+  new Dzi("", { tileSize: ts, noWrap: true, bounds, minZoom: minZ, maxZoom: maxZ, minNativeZoom: minZ,
                 maxNativeZoom: 0, keepBuffer: 1, updateWhenIdle: true }).addTo(map);
-  map.setMinZoom(minZ); map.setMaxZoom(4); map.setMaxBounds(bounds.pad(0.25));
+  map.setMinZoom(minZ); map.setMaxZoom(maxZ); map.setMaxBounds(bounds.pad(0.25));
   map.fitBounds(bounds);
   document.getElementById("map").style.background = "#1b1f1d";
 }
