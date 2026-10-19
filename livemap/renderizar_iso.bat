@@ -7,6 +7,41 @@ set PZ_ROOT=D:\SteamLibrary\steamapps\common\ProjectZomboid
 set OUT=D:\pzmap_render
 set SQR=2
 set OMIT=2
+rem Cada vez te pregunta que zona renderizar. Lo ya renderizado se queda: vas sumando zonas.
+rem IMPORTANTE: no cambies OMIT despues de la primera zona (todas deben tener la misma calidad).
+echo.
+echo  Que zona quieres renderizar?
+echo    1. Riverside y alrededores (x 3600-8250, y 4800-7600)
+echo    2. Muldraugh
+echo    3. West Point
+echo    4. Rosewood
+echo    5. March Ridge
+echo    6. Louisville
+echo    7. Valley Station
+echo    8. Escribir coordenadas (las de la web: x1 y1 x2 y2)
+echo    9. Todo el mapa (~10 GB)
+echo.
+set /p OPC="Numero: "
+set REGION=
+if "%OPC%"=="1" set REGION=riverside
+if "%OPC%"=="2" set REGION=muldraugh
+if "%OPC%"=="3" set REGION=westpoint
+if "%OPC%"=="4" set REGION=rosewood
+if "%OPC%"=="5" set REGION=marchridge
+if "%OPC%"=="6" set REGION=louisville
+if "%OPC%"=="7" set REGION=valleystation
+if "%OPC%"=="8" goto :coords
+if "%OPC%"=="9" goto :zona_ok
+if "%REGION%"=="" ( echo Opcion no valida. & pause & exit /b 1 )
+goto :zona_ok
+:coords
+set /p X1="x1 (esquina, la de la web): "
+set /p Y1="y1: "
+set /p X2="x2 (esquina opuesta): "
+set /p Y2="y2: "
+set REGION=t:%X1%,%Y1%,%X2%,%Y2%
+:zona_ok
+echo Zona: %REGION%
 set PI=arcangel@100.99.158.90
 set LOG=%OUT%\render_log.txt
 
@@ -21,7 +56,7 @@ rem Que el PC no se suspenda mientras renderiza (con cargador)
 powercfg /change standby-timeout-ac 0
 powercfg /change hibernate-timeout-ac 0
 python -m pip install -q -r "%TOOL%\requirements.txt" || goto :error
-python "%~dp0configurar_render.py" "%TOOL%\conf\conf.yaml" "%PZ_ROOT%" "%OUT%" %SQR% %OMIT% || goto :error
+python "%~dp0configurar_render.py" "%TOOL%\conf\conf.yaml" "%PZ_ROOT%" "%OUT%" %SQR% %OMIT% "%REGION%" || goto :error
 pushd "%TOOL%"
 python main.py deploy || goto :error
 python main.py unpack || goto :error
