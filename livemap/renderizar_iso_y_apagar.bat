@@ -2,11 +2,11 @@
 setlocal
 rem ==== Mapa ISOMETRICO (como projectzomboidmap.com): renderiza, sube a la Pi y APAGA el PC ====
 rem OMIT: 3 = 16 px por cuadro, ~3 GB (recomendado: igual a la vista de la web que te gusto)
-rem       2 = 32 px, ~12 GB   1 = 64 px, ~45 GB   0 = 128 px (la web completa), ~250 GB
+rem       2 = 32 px, ~10 GB   1 = 64 px, ~45 GB   0 = 128 px (la web completa), ~250 GB
 set PZ_ROOT=D:\SteamLibrary\steamapps\common\ProjectZomboid
 set OUT=D:\pzmap_render
 set SQR=2
-set OMIT=3
+set OMIT=2
 set PI=arcangel@100.99.158.90
 set LOG=%OUT%\render_log.txt
 
